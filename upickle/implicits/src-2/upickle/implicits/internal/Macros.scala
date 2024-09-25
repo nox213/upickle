@@ -177,7 +177,7 @@ object Macros {
 
                 t.substituteTypes(typeParams, concrete)
               } else {
-                val TypeRef(pref, sym, args) = typeOf[Seq[Int]]
+                val TypeRef(pref, sym, _) = typeOf[Seq[Int]]
                 import compat._
                 TypeRef(pref, sym, t.asInstanceOf[TypeRef].args)
               }

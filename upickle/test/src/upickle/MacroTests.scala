@@ -139,13 +139,35 @@ object TagName{
   implicit val quxRw: TagNamePickler.ReadWriter[Qux] = TagNamePickler.macroRW
   implicit val fooRw: TagNamePickler.ReadWriter[Foo] = TagNamePickler.macroRW
 }
+
+case class Pagination(limit: Int, offset: Int, total: Int)
+
+object Pagination {
+  implicit val rw: RW[Pagination] = upickle.default.macroRW
+}
+
+case class Users(Ids: List[Int], @upickle.implicits.flatten pagination: Pagination)
+
+object Users {
+  implicit val rw: RW[Users] = upickle.default.macroRW
+}
+
+case class PackageManifest(
+                            name: String,
+                            @upickle.implicits.flatten otherStuff: Map[String, ujson.Value]
+                          )
+
+object PackageManifest {
+  implicit val rw: RW[PackageManifest] = upickle.default.macroRW
+}
+
 object MacroTests extends TestSuite {
 
   // Doesn't work :(
 //  case class A_(objects: Option[C_]); case class C_(nodes: Option[C_])
 
 //  implicitly[Reader[A_]]
-//  implicitly[upickle.old.Writer[upickle.MixedIn.Obj.ClsB]]
+//  implicitly[upickle.old.Writer[upickle.MixedIn.Obj.ClsB]code]
 //  println(write(ADTs.ADTc(1, "lol", (1.1, 1.2))))
 //  implicitly[upickle.old.Writer[ADTs.ADTc]]
 
@@ -833,7 +855,6 @@ object MacroTests extends TestSuite {
 
       val customPicklerTest = new TestUtil(customPickler)
 
-      implicit def rwA: customPickler.ReadWriter[upickle.Hierarchy.A] = customPickler.macroRW
       implicit def rwB: customPickler.ReadWriter[upickle.Hierarchy.B] = customPickler.macroRW
       implicit def rwC: customPickler.ReadWriter[upickle.Hierarchy.C] = customPickler.macroRW
 
@@ -872,5 +893,11 @@ object MacroTests extends TestSuite {
       )
 
     }
+
+    test("flatten"){
+      val a = Users(List(1, 2, 3), Pagination(10, 20, 30))
+      upickle.default.write[Users](a) ==> """{"Ids":[1,2,3],"limit":10,"offset":20,"total":30}"""
+    }
+
   }
 }

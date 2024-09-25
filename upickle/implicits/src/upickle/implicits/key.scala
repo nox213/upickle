@@ -29,3 +29,5 @@ class serializeDefaults(s: Boolean) extends StaticAnnotation
  * over upickle pickler-level configuration
  */
 class allowUnknownKeys(b: Boolean) extends StaticAnnotation
+
+class flatten extends StaticAnnotation
