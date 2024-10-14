@@ -224,9 +224,8 @@ def tagKeyImpl[T](using Quotes, Type[T])(thisOuter: Expr[upickle.core.Types with
 inline def applyConstructor[T](params: Array[Any]): T = ${ applyConstructorImpl[T]('params) }
 def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Array[Any]]): Expr[T] =
   import quotes.reflect._
-  def apply(typeApply: Option[List[TypeRepr]]) = {
+  def apply(appliedTypeOpt: Option[AppliedType]) = {
     val tpe = TypeRepr.of[T]
-    val companion: Symbol = tpe.classSymbol.get.companionModule
     val constructorSym = tpe.typeSymbol.primaryConstructor
     val constructorParamSymss = constructorSym.paramSymss
 
@@ -238,8 +237,8 @@ def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Arra
         val lhs = '{$params(${ Expr(i) })}
         val tpe0 = constructorTpe.memberType(sym0)
 
-        typeApply.map(tps => tpe0.substituteTypes(tparams0, tps)).getOrElse(tpe0) match {
-          case AnnotatedType(AppliedType(base, Seq(arg)), x)
+        appliedTypeOpt.map(appliedType => tpe0.substituteTypes(tparams0, appliedType.args)).getOrElse(tpe0) match {
+          case AnnotatedType(AppliedType(_, Seq(arg)), x)
             if x.tpe =:= defn.RepeatedAnnot.typeRef =>
             arg.asType match {
               case '[t] =>
@@ -253,18 +252,18 @@ def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Arra
               case '[t] => '{ $lhs.asInstanceOf[t] }.asTerm
             }
         }
-
     }
 
-    typeApply match{
-      case None => Select.overloaded(Ref(companion), "apply", Nil, rhs).asExprOf[T]
-      case Some(args) =>
-        Select.overloaded(Ref(companion), "apply", args, rhs).asExprOf[T]
+    val constructorTree = appliedTypeOpt match {
+      case Some(AppliedType(tycon, args)) => New(Inferred(tycon)).select(constructorSym).appliedToTypes(args)
+      case None => New(TypeTree.of[T]).select(constructorSym)
     }
+
+    constructorTree.appliedToArgs(rhs).asExprOf[T]
   }
 
   TypeRepr.of[T] match{
-    case t: AppliedType => apply(Some(t.args))
+    case t: AppliedType => apply(Some(t))
     case t: TypeRef => apply(None)
     case t: TermRef => '{${Ref(t.classSymbol.get.companionModule).asExprOf[Any]}.asInstanceOf[T]}
   }

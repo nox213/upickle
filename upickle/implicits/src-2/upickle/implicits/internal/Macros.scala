@@ -170,14 +170,14 @@ object Macros {
 
           def func(t: Type) = {
 
-            if (argSyms.length == 0) t
+            if (argSyms.isEmpty) t
             else {
               val concrete = tpe.normalize.asInstanceOf[TypeRef].args
               if (t.typeSymbol != definitions.RepeatedParamClass) {
 
                 t.substituteTypes(typeParams, concrete)
               } else {
-                val TypeRef(pref, sym, args) = typeOf[Seq[Int]]
+                val TypeRef(pref, sym, _) = typeOf[Seq[Int]]
                 import compat._
                 TypeRef(pref, sym, t.asInstanceOf[TypeRef].args)
               }
@@ -301,6 +301,7 @@ object Macros {
 
       val localReaders = for (i <- rawArgs.indices) yield TermName("localReader" + i)
       val aggregates = for (i <- rawArgs.indices) yield TermName("aggregated" + i)
+      val typeTreeOfClass: c.Tree = c.universe.TypeTree(targetType)
       q"""
         ..${
           for (i <- rawArgs.indices)
@@ -355,7 +356,7 @@ object Macros {
               }){
                 this.errorMissingKeys(${rawArgs.length}, ${mappedArgs.toArray})
               }
-              $companion.apply(
+              new $typeTreeOfClass(
                 ..${
                   for(i <- rawArgs.indices)
                   yield

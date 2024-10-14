@@ -144,6 +144,23 @@ object TagName{
   implicit val quxRw: TagNamePickler.ReadWriter[Qux] = TagNamePickler.macroRW
   implicit val fooRw: TagNamePickler.ReadWriter[Foo] = TagNamePickler.macroRW
 }
+
+
+// Defined for compilation test
+sealed trait Term
+
+case class Var(name: String) extends Term
+object Var {
+  def apply(name: String): Term = new Var(name)
+  implicit val rw: RW[Var] = upickle.default.macroRW
+}
+
+case class Constant(value: Int) extends Term
+object Constant {
+  def apply(value: Int): Term = new Constant(value)
+  implicit val rw: RW[Constant] = upickle.default.macroRW
+}
+
 object MacroTests extends TestSuite {
 
   // Doesn't work :(
