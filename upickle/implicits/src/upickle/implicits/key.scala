@@ -30,4 +30,16 @@ class serializeDefaults(s: Boolean) extends StaticAnnotation
  */
 class allowUnknownKeys(b: Boolean) extends StaticAnnotation
 
+
+/**
+ * An annotation that, when applied to a field in a case class, flattens the fields of the
+ * annotated `case class` or `Map` into the parent case class during serialization.
+ * This means the fields will appear at the same level as the parent case class's fields
+ * rather than nested under the field name. During deserialization, these fields are
+ * grouped back into the annotated `case class` or `Map`.
+ *
+ * **Limitations**:
+ * - Only works with `Map` types that are subtypes of `Map[String, _]`.
+ * - Cannot flatten more than two `Map` instances in a same level.
+ */
 class flatten extends StaticAnnotation

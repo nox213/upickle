@@ -23,7 +23,7 @@ trait WritersVersionSpecific
           if (v == null) out.visitNull(-1)
           else {
             val ctx = out.visitObject(length(v), true, -1)
-            macros.writeSnippets[R, T, Tuple.Map[m.MirroredElemTypes, Writer]](
+            macros.writeSnippets[R, T, Writer](
               outerThis,
               this,
               v,
@@ -34,7 +34,7 @@ trait WritersVersionSpecific
         }
 
         def writeToObject[R](ctx: _root_.upickle.core.ObjVisitor[_, R], v: T): Unit =
-          macros.writeSnippets[R, T, Tuple.Map[m.MirroredElemTypes, Writer]](
+          macros.writeSnippets[R, T, Writer](
             outerThis,
             this,
             v,

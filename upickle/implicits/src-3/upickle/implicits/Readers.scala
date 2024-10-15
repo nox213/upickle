@@ -5,6 +5,7 @@ import deriving.Mirror
 import scala.util.NotGiven
 import upickle.core.{Annotator, ObjVisitor, Visitor, Abort, CurrentlyDeriving}
 import upickle.implicits.BaseCaseObjectContext
+import scala.collection.mutable
 
 trait ReadersVersionSpecific
   extends MacrosCommon
@@ -15,28 +16,46 @@ trait ReadersVersionSpecific
   abstract class CaseClassReader3[T](paramCount: Int,
                                      missingKeyCount: Long,
                                      allowUnknownKeys: Boolean,
-                                     construct: Array[Any] => T) extends CaseClassReader[T] {
+                                     construct: (Array[Any], scala.collection.mutable.Map[String, Any]) => T) extends CaseClassReader[T] {
 
-    def visitors0: Product
-    lazy val visitors = visitors0
-    def fromProduct(p: Product): T
+    def visitors0: (AnyRef, Array[AnyRef])
+    lazy val (visitorMap, visitors) = visitors0
+    lazy val hasFlattenOnMap = visitorMap ne null
     def keyToIndex(x: String): Int
     def allKeysArray: Array[String]
     def storeDefaults(x: upickle.implicits.BaseCaseObjectContext): Unit
     trait ObjectContext extends ObjVisitor[Any, T] with BaseCaseObjectContext{
       private val params = new Array[Any](paramCount)
+      private val map = scala.collection.mutable.Map.empty[String, Any] 
 
-      def storeAggregatedValue(currentIndex: Int, v: Any): Unit = params(currentIndex) = v
+      def storeAggregatedValue(currentIndex: Int, v: Any): Unit = 
+        if (currentIndex == -1) {
+          if (storeToMap) {
+            map(currentKey) = v
+          }
+        } else {
+          params(currentIndex) = v
+        }
 
       def subVisitor: Visitor[_, _] =
-        if (currentIndex == -1) upickle.core.NoOpVisitor
-        else visitors.productElement(currentIndex).asInstanceOf[Visitor[_, _]]
+        if (currentIndex == -1) {
+          if (hasFlattenOnMap) visitorMap.asInstanceOf[Visitor[_, _]]
+          else upickle.core.NoOpVisitor
+        } 
+        else {
+          visitors(currentIndex).asInstanceOf[Visitor[_, _]]
+        }
 
       def visitKeyValue(v: Any): Unit =
-        val k = objectAttributeKeyReadMap(v.toString).toString
-        currentIndex = keyToIndex(k)
-        if (currentIndex == -1 && !allowUnknownKeys) {
-          throw new upickle.core.Abort("Unknown Key: " + k.toString)
+        storeToMap = false
+        currentKey = objectAttributeKeyReadMap(v.toString).toString
+        currentIndex = keyToIndex(currentKey)
+        if (currentIndex == -1) {
+          if (hasFlattenOnMap) {
+            storeToMap = true
+          } else if (!allowUnknownKeys) {
+            throw new upickle.core.Abort("Unknown Key: " + currentKey.toString)
+          }
         }
 
       def visitEnd(index: Int): T =
@@ -47,7 +66,7 @@ trait ReadersVersionSpecific
         if (this.checkErrorMissingKeys(missingKeyCount))
           this.errorMissingKeys(paramCount, allKeysArray)
 
-        construct(params)
+        construct(params, map)
     }
     override def visitObject(length: Int,
                              jsonableKeys: Boolean,
@@ -58,16 +77,18 @@ trait ReadersVersionSpecific
 
   inline def macroR[T](using m: Mirror.Of[T]): Reader[T] = inline m match {
     case m: Mirror.ProductOf[T] =>
+      macros.validateFlattenAnnotation[T]()
+      val paramCount = macros.paramsCount[T]
       val reader = new CaseClassReader3[T](
-        macros.paramsCount[T],
-        macros.checkErrorMissingKeysCount[T](),
+        paramCount,
+        if (paramCount <= 64) if (paramCount == 64) -1 else (1L << paramCount) - 1
+        else paramCount,
         macros.extractIgnoreUnknownKeys[T]().headOption.getOrElse(this.allowUnknownKeys),
-        params => macros.applyConstructor[T](params)
+        (params: Array[Any], map :scala.collection.mutable.Map[String ,Any]) => macros.applyConstructor[T](params, map)
       ){
-        override def visitors0 = compiletime.summonAll[Tuple.Map[m.MirroredElemTypes, Reader]]
-        override def fromProduct(p: Product): T = m.fromProduct(p)
+        override def visitors0 = macros.allReaders[T, Reader]
         override def keyToIndex(x: String): Int = macros.keyToIndex[T](x)
-        override def allKeysArray = macros.fieldLabels[T].map(_._2).toArray
+        override def allKeysArray = macros.allFieldsMappedName[T].toArray
         override def storeDefaults(x: upickle.implicits.BaseCaseObjectContext): Unit = macros.storeDefaults[T](x)
       }
 

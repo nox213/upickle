@@ -145,25 +145,63 @@ object TagName{
   implicit val fooRw: TagNamePickler.ReadWriter[Foo] = TagNamePickler.macroRW
 }
 
-case class Pagination(limit: Int, offset: Int, total: Int)
+object Flatten {
+  case class FlattenTest(i: Int, s: String, @upickle.implicits.flatten n: Nested, @upickle.implicits.flatten n2: Nested2)
 
-object Pagination {
-  implicit val rw: RW[Pagination] = upickle.default.macroRW
-}
+  object FlattenTest {
+    implicit val rw: RW[FlattenTest] = upickle.default.macroRW
+  }
 
-case class Users(Ids: List[Int], @upickle.implicits.flatten pagination: Pagination)
+  case class Nested(d: Double, @upickle.implicits.flatten m: Map[String, Int])
 
-object Users {
-  implicit val rw: RW[Users] = upickle.default.macroRW
-}
+  object Nested {
+    implicit val rw: RW[Nested] = upickle.default.macroRW
+  }
 
-case class PackageManifest(
-                            name: String,
-                            @upickle.implicits.flatten otherStuff: Map[String, ujson.Value]
-                          )
+  case class Nested2(name: String)
 
-object PackageManifest {
-  implicit val rw: RW[PackageManifest] = upickle.default.macroRW
+  object Nested2 {
+    implicit val rw: RW[Nested2] = upickle.default.macroRW
+  }
+
+  case class FlattenTestWithType[T](i: Int, @upickle.implicits.flatten t: T)
+
+  object FlattenTestWithType {
+    //  implicit def rw[T: RW]: RW[FlattenTestWithType[T]] = upickle.default.macroRW
+    implicit val rw: RW[FlattenTestWithType[Nested]] = upickle.default.macroRW
+  }
+
+  case class InnerMost(a: String, b: Int)
+
+  object InnerMost {
+    implicit val rw: RW[InnerMost] = upickle.default.macroRW
+  }
+
+  case class Inner(@upickle.implicits.flatten innerMost: InnerMost, c: Boolean)
+
+  object Inner {
+    implicit val rw: RW[Inner] = upickle.default.macroRW
+  }
+
+  case class Outer(d: Double, @upickle.implicits.flatten inner: Inner)
+
+  object Outer {
+    implicit val rw: RW[Outer] = upickle.default.macroRW
+  }
+
+  case class HasMap(@upickle.implicits.flatten map: Map[String, String], i: Int)
+  object HasMap {
+    implicit val rw: RW[HasMap] = upickle.default.macroRW
+  }
+
+  case class FlattenWithDefault(i: Int, @upickle.implicits.flatten n: NestedWithDefault)
+  object FlattenWithDefault {
+    implicit val rw: RW[FlattenWithDefault] = upickle.default.macroRW
+  }
+  case class NestedWithDefault(k: Int = 100, l: String)
+  object NestedWithDefault {
+    implicit val rw: RW[NestedWithDefault] = upickle.default.macroRW
+  }
 }
 
 object MacroTests extends TestSuite {
@@ -172,7 +210,7 @@ object MacroTests extends TestSuite {
 //  case class A_(objects: Option[C_]); case class C_(nodes: Option[C_])
 
 //  implicitly[Reader[A_]]
-//  implicitly[upickle.old.Writer[upickle.MixedIn.Obj.ClsB]code]
+//  implicitly[upickle.old.Writer[upickle.MixedIn.Obj.ClsB]]
 //  println(write(ADTs.ADTc(1, "lol", (1.1, 1.2))))
 //  implicitly[upickle.old.Writer[ADTs.ADTc]]
 
@@ -904,9 +942,39 @@ object MacroTests extends TestSuite {
     }
 
     test("flatten"){
-      val a = Users(List(1, 2, 3), Pagination(10, 20, 30))
-      upickle.default.write[Users](a) ==> """{"Ids":[1,2,3],"limit":10,"offset":20,"total":30}"""
+      import Flatten._
+      val a = FlattenTest(10, "test", Nested(3.0, Map("one" -> 1, "two" -> 2)), Nested2("hello"))
+      rw(a, """{"i":10,"s":"test","d":3,"one":1,"two":2,"name":"hello"}""")
     }
 
+    test("flattenTypeParam"){
+      import Flatten._
+      val a = FlattenTestWithType[Nested](10, Nested(5.0, Map("one" -> 1, "two" -> 2)))
+      rw(a, """{"i":10,"d":5,"one":1,"two":2}""")
+    }
+
+    test("nestedFlatten") {
+      import Flatten._
+      val value = Outer(1.1, Inner(InnerMost("test", 42), true))
+      rw(value, """{"d":1.1,"a":"test","b":42,"c":true}""")
+    }
+
+    test("flattenWithMap") {
+      import Flatten._
+      val value = HasMap(Map("key1" -> "value1", "key2" -> "value2"), 10)
+      rw(value, """{"key1":"value1","key2":"value2","i":10}""")
+    }
+
+    test("flattenEmptyMap") {
+      import Flatten._
+      val value = HasMap(Map.empty, 10)
+      rw(value, """{"i":10}""")
+    }
+
+    test("flattenWithDefaults") {
+      import Flatten._
+      val value = FlattenWithDefault(10, NestedWithDefault(l = "default"))
+      rw(value, """{"i":10,"l":"default"}""")
+    }
   }
 }

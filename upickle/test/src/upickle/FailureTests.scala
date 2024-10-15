@@ -37,6 +37,11 @@ object WrongTag {
 
 }
 
+case class FlattenTwoMaps(@upickle.implicits.flatten map1: Map[String, String], @upickle.implicits.flatten map2: Map[String, String])
+case class ConflictingKeys(i: Int, @upickle.implicits.flatten cm: ConflictingMessage)
+case class ConflictingMessage(i: Int)
+case class MapWithNoneStringKey(@upickle.implicits.flatten map: Map[ConflictingMessage, String])
+
 object TaggedCustomSerializer{
 
   sealed trait BooleanOrInt
@@ -265,6 +270,9 @@ object FailureTests extends TestSuite {
 //      compileError("""read[Array[Object]]("")""").msg
       // Make sure this doesn't hang the compiler =/
       compileError("implicitly[upickle.default.Reader[Nothing]]")
+      compileError("upickle.default.macroRW[FlattenTwoMaps]")
+      compileError("upickle.default.macroRW[ConflictingKeys]")
+      compileError("upickle.default.macroRW[MapWithNoneStringKey]")
     }
     test("expWholeNumbers"){
       upickle.default.read[Byte]("0e0") ==> 0.toByte

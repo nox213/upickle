@@ -11,6 +11,11 @@ import language.higherKinds
 import language.existentials
 
 /**
+ * This file is deprecated and remained here for binary compatibility.
+ * Please use upickle/implicits/src-2/upickle/implicits/internal/Macros2.scala instead.
+ */
+
+/**
  * Implementation of macros used by uPickle to serialize and deserialize
  * case classes automatically. You probably shouldn't need to use these
  * directly, since they are called implicitly when trying to read/write
@@ -177,7 +182,7 @@ object Macros {
 
                 t.substituteTypes(typeParams, concrete)
               } else {
-                val TypeRef(pref, sym, _) = typeOf[Seq[Int]]
+                val TypeRef(pref, sym, args) = typeOf[Seq[Int]]
                 import compat._
                 TypeRef(pref, sym, t.asInstanceOf[TypeRef].args)
               }

@@ -43,7 +43,7 @@ trait MacroImplicits extends MacrosCommon { this: upickle.core.Types =>
   def macroW[T]: Writer[T] = macro MacroImplicits.applyW[T]
   def macroRW[T]: ReadWriter[T] = macro MacroImplicits.applyRW[ReadWriter[T]]
 
-  def macroR0[T, M[_]]: Reader[T] = macro internal.Macros.macroRImpl[T, M]
-  def macroW0[T, M[_]]: Writer[T] = macro internal.Macros.macroWImpl[T, M]
+  def macroR0[T, M[_]]: Reader[T] = macro internal.Macros2.macroRImpl[T, M]
+  def macroW0[T, M[_]]: Writer[T] = macro internal.Macros2.macroWImpl[T, M]
 }
 
