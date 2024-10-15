@@ -391,17 +391,6 @@ object Macros {
     val c: scala.reflect.macros.blackbox.Context
     import c.universe._
     def wrapObject(obj: c.Tree) = q"new ${c.prefix}.SingletonWriter($obj)"
-    def findUnapply(tpe: Type) = {
-      val (companion, paramTypes, argSyms, hasDefaults) = getArgSyms(tpe).fold(
-        errMsg => c.abort(c.enclosingPosition, errMsg),
-        x => x
-      )
-      Seq("unapply", "unapplySeq")
-        .map(newTermName(_))
-        .find(companion.tpe.member(_) != NoSymbol)
-        .getOrElse(c.abort(c.enclosingPosition, "None of the following methods " +
-        "were defined: unapply, unapplySeq"))
-    }
 
     def internal = q"${c.prefix}.Internal"
     def wrapCaseN(companion: c.Tree,
