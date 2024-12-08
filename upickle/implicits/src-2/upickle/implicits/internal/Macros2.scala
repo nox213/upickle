@@ -21,10 +21,10 @@ object Macros2 {
 
   trait DeriveDefaults[M[_]] {
     val c: scala.reflect.macros.blackbox.Context
-    private def fail(tpe: c.Type, s: String) = c.abort(c.enclosingPosition, s)
+    private[upickle] def fail(tpe: c.Type, s: String) = c.abort(c.enclosingPosition, s)
 
     import c.universe._
-    private def companionTree(tpe: c.Type): Tree = {
+    private[upickle] def companionTree(tpe: c.Type): Tree = {
       val companionSymbol = tpe.typeSymbol.companionSymbol
 
       if (companionSymbol == NoSymbol && tpe.typeSymbol.isClass) {
@@ -37,7 +37,7 @@ object Macros2 {
       } else {
         val symTab = c.universe.asInstanceOf[reflect.internal.SymbolTable]
         val pre = tpe.asInstanceOf[symTab.Type].prefix.asInstanceOf[Type]
-        c.universe.treeBuild.mkAttributedRef(pre, companionSymbol)
+        c.universe.internal.gen.mkAttributedRef(pre, companionSymbol)
       }
 
     }
@@ -55,10 +55,10 @@ object Macros2 {
         baseClsArgs = st.baseType(tpe.typeSymbol).asInstanceOf[TypeRef].args
       } yield {
         tpe match{
-          case ExistentialType(_, TypeRef(pre, sym, args)) =>
+          case ExistentialType(_, TypeRef(_, _, args)) =>
             st.substituteTypes(baseClsArgs.map(_.typeSymbol), args)
           case ExistentialType(_, _) => st
-          case TypeRef(pre, sym, args) =>
+          case TypeRef(_, _, args) =>
             st.substituteTypes(baseClsArgs.map(_.typeSymbol), args)
         }
       }
@@ -68,7 +68,7 @@ object Macros2 {
       val mod = tpe.typeSymbol.asClass.module
       val symTab = c.universe.asInstanceOf[reflect.internal.SymbolTable]
       val pre = tpe.asInstanceOf[symTab.Type].prefix.asInstanceOf[Type]
-      val mod2 = c.universe.treeBuild.mkAttributedRef(pre, mod)
+      val mod2 = c.universe.internal.gen.mkAttributedRef(pre, mod)
 
       annotate(tpe)(wrapObject(mod2))
 
@@ -77,7 +77,7 @@ object Macros2 {
     private[upickle] def mergeTrait(tagKey: Option[String], subtrees: Seq[Tree], subtypes: Seq[Type], targetType: c.Type): Tree
 
     private[upickle] def derive(tpe: c.Type) = {
-      if (tpe.typeSymbol.asClass.isTrait || (tpe.typeSymbol.asClass.isAbstractClass && !tpe.typeSymbol.isJava)) {
+      if (tpe.typeSymbol.asClass.isTrait || (tpe.typeSymbol.asClass.isAbstract && !tpe.typeSymbol.isJava)) {
         val derived = deriveTrait(tpe)
         derived
       }
@@ -115,11 +115,9 @@ object Macros2 {
 
       weakTypeOf[M[_]](typeclass) match {
         case TypeRef(a, b, _) =>
-          import compat._
-          TypeRef(a, b, List(t))
+          internal.typeRef(a, b, List(t))
         case ExistentialType(_, TypeRef(a, b, _)) =>
-          import compat._
-          TypeRef(a, b, List(t))
+          internal.typeRef(a, b, List(t))
         case x =>
           println("Dunno Wad Dis Typeclazz Is " + x)
           println(x)
@@ -128,111 +126,85 @@ object Macros2 {
       }
     }
 
-    sealed trait Flatten
-
-    object Flatten {
-      case class Class(companion: Tree, fields: List[Field], varArgs: Boolean) extends Flatten
-      case object Map extends Flatten
-      case object None extends Flatten
-    }
-
-    case class Field(
-      name: String,
-      mappedName: String,
-      tpe: Type,
-      symbol: Symbol,
-      defaultValue: Option[Tree],
-      flatten: Flatten,
-    ) {
-      lazy val allFields: List[Field] = {
-        def loop(field: Field): List[Field] =
-          field.flatten match {
-            case Flatten.Class(_, fields, _) => fields.flatMap(loop)
-            case Flatten.Map => List(field)
-            case Flatten.None => List(field)
-          }
-        loop(this)
-      }
-    }
-
-    private def getFields(tpe: c.Type): (c.Tree, List[Field], Boolean) = {
-      def applyTypeArguments(t: c.Type ): c.Type = {
-        val typeParams = tpe.typeSymbol.asClass.typeParams
-        val typeArguments = tpe.normalize.asInstanceOf[TypeRef].args
-        if (t.typeSymbol != definitions.RepeatedParamClass) {
-          t.substituteTypes(typeParams, typeArguments)
-        } else {
-          val TypeRef(pref, sym, _) = typeOf[Seq[Int]]
-          internal.typeRef(pref, sym, t.asInstanceOf[TypeRef].args)
-        }
-      }
-
-      val companion = companionTree(tpe)
-      //tickle the companion members -- Not doing this leads to unexpected runtime behavior
-      //I wonder if there is an SI related to this?
-      companion.tpe.members.foreach(_ => ())
-      tpe.members.find(x => x.isMethod && x.asMethod.isPrimaryConstructor) match {
-        case None => fail(tpe, "Can't find primary constructor of " + tpe)
-        case Some(primaryConstructor) =>
-          val params = primaryConstructor.asMethod.paramLists.flatten
-          val varArgs = params.lastOption.exists(_.typeSignature.typeSymbol == definitions.RepeatedParamClass)
-          val fields = params.zipWithIndex.map { case (param, i) =>
-            val name = param.name.decodedName.toString
-            val mappedName = customKey(param).getOrElse(name)
-            val tpeOfField = applyTypeArguments(param.typeSignature)
-            val defaultValue = if (param.asTerm.isParamWithDefault)
-              Some(q"$companion.${TermName("apply$default$" + (i + 1))}")
-            else
-              None
-            val flatten = param.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
-              case Some(_) =>
-                if (tpeOfField.typeSymbol == typeOf[collection.immutable.Map[_, _]].typeSymbol) Flatten.Map
-                else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
-                  val (nestedCompanion, fields, nestedVarArgs) = getFields(tpeOfField)
-                  Flatten.Class(nestedCompanion, fields, nestedVarArgs)
-                }
-                else fail(tpeOfField,
-                  s"""Invalid type for flattening: $tpeOfField.
-                     | Flatten only works on case classes and Maps""".stripMargin)
-              case None =>
-                Flatten.None
-            }
-            Field(param.name.toString, mappedName, tpeOfField, param, defaultValue, flatten)
-          }
-          (companion, fields, varArgs)
-      }
-    }
-
     private def deriveClass(tpe: c.Type) = {
-      val (companion, fields, varArgs) = getFields(tpe)
+      val fields = getFields(tpe)
       // According to @retronym, this is necessary in order to force the
       // default argument `apply$default$n` methods to be synthesized
+      val companion = companionTree(tpe)
       companion.tpe.member(TermName("apply")).info
 
-      val allFields = fields.flatMap(_.allFields)
-      validateFlattenAnnotation(allFields)
+      validateFlattenAnnotation(fields)
 
       val derive =
         // Otherwise, reading and writing are kinda identical
         wrapCaseN(
-          companion,
           fields,
-          varArgs,
           targetType = tpe,
         )
 
       annotate(tpe)(derive)
     }
 
-    private def validateFlattenAnnotation(fields: List[Field]): Unit = {
-      if (fields.count(_.flatten == Flatten.Map) > 1) {
-        fail(NoType, "Only one Map can be annotated with @upickle.implicits.flatten in the same level")
+    private def getFields(tpe: c.Type): List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)] = {
+      val params = getSymbols(tpe)
+      val fields = params.zipWithIndex.flatMap { case (param, i) =>
+        val (mappedName, tpeOfField, defaultValue) = getSymbolDetail(param, i, tpe)
+        param.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
+          case Some(_) =>
+            if (isFlattableCollection(tpeOfField))
+              List((param.name.toString, mappedName, tpeOfField, param, defaultValue, true))
+            else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
+              getFields(tpeOfField)
+            }
+            else fail(tpeOfField, s"Invalid type for flattening getField: $tpeOfField.")
+          case None =>
+            List((param.name.toString, mappedName, tpeOfField, param, defaultValue, false))
+        }
       }
-      if (fields.map(_.mappedName).distinct.length != fields.length) {
+      fields
+    }
+
+    private[upickle] def getSymbols(tpe: c.Type): List[Symbol] =  {
+      val companion = companionTree(tpe)
+      //tickle the companion members -- Not doing this leads to unexpected runtime behavior
+      //I wonder if there is an SI related to this?
+      companion.tpe.members.foreach(_ => ())
+
+      tpe.members.find(x => x.isMethod && x.asMethod.isPrimaryConstructor) match {
+        case Some(primaryConstructor) => primaryConstructor.asMethod.paramLists.flatten
+        case None => fail(tpe, "Can't find primary constructor of " + tpe)
+      }
+    }
+
+    private[upickle] def getSymbolDetail(symbol: Symbol, idx: Int, containingTpe: c.Type): (String, c.Type, Option[c.Tree]) = {
+      val name = symbol.name.decodedName.toString
+      val mappedName = customKey(symbol).getOrElse(name)
+      val companion = companionTree(containingTpe)
+      val tpe = applyTypeArguments(containingTpe, appliedTpe = symbol.typeSignature)
+      val defaultValue = if (symbol.asTerm.isParamWithDefault)
+        Some(q"$companion.${TermName("apply$default$" + (idx + 1))}")
+      else
+        None
+      (mappedName, tpe, defaultValue)
+    }
+
+    private def applyTypeArguments(tpe: c.Type, appliedTpe: c.Type): c.Type = {
+      val typeParams = tpe.typeSymbol.asClass.typeParams
+      val typeArguments = tpe.typeArgs
+      if (appliedTpe.typeSymbol != definitions.RepeatedParamClass) {
+        appliedTpe.substituteTypes(typeParams, typeArguments)
+      } else {
+        val TypeRef(pref, sym, _) = typeOf[Seq[Int]]
+        internal.typeRef(pref, sym, appliedTpe.asInstanceOf[TypeRef].args)
+      }
+    }
+
+    private def validateFlattenAnnotation(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)]): Unit = {
+      if (fields.count { case(_, _, _, _, _, isCollection) => isCollection } > 1) {
+        fail(NoType, "Only one collection can be annotated with @upickle.implicits.flatten in the same level")
+      }
+      if (fields.map { case (_, mappedName, _, _, _, _) => mappedName }.distinct.length != fields.length) {
         fail(NoType, "There are multiple fields with the same key")
-      }
-      if (fields.exists(field => field.flatten == Flatten.Map && !(field.tpe <:< typeOf[Map[String, _]]))) {
-        fail(NoType, "The key type of a Map annotated with @flatten must be String.")
       }
     }
 
@@ -285,6 +257,10 @@ object Macros2 {
       }
     }
 
+    private[upickle] def isFlattableCollection(tpe: c.Type): Boolean = {
+      tpe.typeSymbol == typeOf[collection.immutable.Map[_, _]].typeSymbol
+    }
+
     private def customKey(sym: c.Symbol): Option[String] = {
         sym.annotations
           .find(_.tpe == typeOf[key])
@@ -301,10 +277,8 @@ object Macros2 {
 
     private[upickle] def wrapObject(obj: Tree): Tree
 
-    private[upickle] def wrapCaseN(companion: Tree,
-                  fields: List[Field],
-                  varargs: Boolean,
-                  targetType: c.Type): Tree
+    private[upickle] def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+                                   targetType: c.Type): Tree
   }
 
   abstract class Reading[M[_]] extends DeriveDefaults[M] {
@@ -312,51 +286,70 @@ object Macros2 {
     import c.universe._
     def wrapObject(t: c.Tree) = q"new ${c.prefix}.SingletonReader($t)"
 
-    def wrapCaseN(companion: c.universe.Tree, fields: List[Field], varargs: Boolean, targetType: c.Type): c.universe.Tree = {
+    def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+                  targetType: c.Type): c.universe.Tree = {
       val allowUnknownKeysAnnotation = targetType.typeSymbol
         .annotations
         .find(_.tree.tpe == typeOf[upickle.implicits.allowUnknownKeys])
         .flatMap(_.tree.children.tail.headOption)
         .map { case Literal(Constant(b)) => b.asInstanceOf[Boolean] }
 
-      val allFields = fields.flatMap(_.allFields).toArray.filter(_.flatten != Flatten.Map)
-      val (hasFlattenOnMap, valueTypeOfMap) = fields.flatMap(_.allFields).find(_.flatten == Flatten.Map) match {
+      val (mappedNames, types, defaultValues) = fields.toArray.filter { case (_, _, _, _, _, isCollection) => !isCollection }.map {
+        case (_, mappedName, tpe, _, defaultValue, _) => (mappedName, tpe, defaultValue)
+      }.unzip3
+      val (hasFlattenOnMap, valueTypeOfMap) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
         case Some(f) =>
-          val TypeRef(_, _, _ :: valueType :: Nil) = f.tpe
+          val TypeRef(_, _, _ :: valueType :: Nil) = f._3
           (true, valueType)
         case None => (false, NoType)
       }
-      val numberOfFields = allFields.length
-      val (localReaders, aggregates) = allFields.zipWithIndex.map { case (_, idx) =>
+      val numberOfFields = mappedNames.length
+      val (localReaders, aggregates) = mappedNames.zipWithIndex.map { case (_, idx) =>
             (TermName(s"localReader$idx"), TermName(s"aggregated$idx"))
         }.unzip
 
-      val fieldToId = allFields.zipWithIndex.toMap
-      def constructClass(companion: c.universe.Tree, fields: List[Field],  varargs: Boolean): c.universe.Tree =
-        q"""
-           $companion.apply(
-             ..${
-               fields.map { field =>
-                 field.flatten match {
-                   case Flatten.Class(c, f, v) => constructClass(c, f, v)
-                   case Flatten.Map =>
-                     val termName = TermName(s"aggregatedMap")
-                     q"$termName.toMap"
-                   case Flatten.None =>
-                     val idx = fieldToId(field)
-                     val termName = TermName(s"aggregated$idx")
-                     if (field == fields.last && varargs) q"$termName:_*"
-                     else q"$termName"
-                 }
-               }
-             }
-           )
-        """
+      def constructClass(constructedTpe: c.Type): c.universe.Tree = {
+        def loop(tpe: c.Type, offset: Int): (c.universe.Tree, Int) = {
+          val companion = companionTree(tpe)
+          val symbols = getSymbols(tpe)
+          val varArgs = symbols.lastOption.exists(_.typeSignature.typeSymbol == definitions.RepeatedParamClass)
+          val (terms, nextOffset) =
+            symbols.foldLeft((List.empty[Tree], offset)) { case ((terms, idx), symbol) =>
+              val (_, tpeOfField, _) = getSymbolDetail(symbol, 0, tpe)
+              symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
+                case Some(_) =>
+                  if (isFlattableCollection(tpeOfField)) {
+                    val termName = TermName(s"aggregatedMap")
+                    val term = q"$termName.toMap"
+                    (term :: terms, idx)
+                  } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
+                    val (term, nextIdx) = loop(tpeOfField, idx)
+                    (term :: terms, nextIdx)
+                  }
+                  else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+                case None =>
+                  val termName = TermName(s"aggregated$idx")
+                  val term = if (symbol == symbols.last && varArgs) q"$termName:_*" else q"$termName"
+                  (term :: terms, idx + 1)
+              }
+            }
+          val constructed =
+            q"""
+              $companion.apply(
+                ..${
+                  terms.reverse
+                }
+              )
+            """
+          (constructed, nextOffset)
+        }
+        loop(constructedTpe, 0)._1
+      }
 
       q"""
         ..${
-          for (i <- allFields.indices)
-          yield q"private[this] lazy val ${localReaders(i)} = implicitly[${c.prefix}.Reader[${allFields(i).tpe}]]"
+          for (i <- types.indices)
+          yield q"private[this] lazy val ${localReaders(i)} = implicitly[${c.prefix}.Reader[${types(i)}]]"
         }
         ..${
           if (hasFlattenOnMap)
@@ -368,8 +361,8 @@ object Macros2 {
         new ${c.prefix}.CaseClassReader[$targetType] {
           override def visitObject(length: Int, jsonableKeys: Boolean, index: Int) = new ${if (numberOfFields <= 64) tq"_root_.upickle.implicits.CaseObjectContext[$targetType]" else tq"_root_.upickle.implicits.HugeCaseObjectContext[$targetType]"}(${numberOfFields}) {
             ..${
-              for (i <- allFields.indices)
-              yield q"private[this] var ${aggregates(i)}: ${allFields(i).tpe} = _"
+              for (i <- types.indices)
+              yield q"private[this] var ${aggregates(i)}: ${types(i)} = _"
             }
             ..${
               if (hasFlattenOnMap)
@@ -382,7 +375,7 @@ object Macros2 {
             def storeAggregatedValue(currentIndex: Int, v: Any): Unit = currentIndex match {
               case ..${
                 for (i <- aggregates.indices)
-                  yield cq"$i => ${aggregates(i)} = v.asInstanceOf[${allFields(i).tpe}]"
+                  yield cq"$i => ${aggregates(i)} = v.asInstanceOf[${types(i)}]"
                 }
               case ..${
                   if (hasFlattenOnMap)
@@ -397,8 +390,8 @@ object Macros2 {
               currentKey = ${c.prefix}.objectAttributeKeyReadMap(s.toString).toString
               currentIndex = currentKey match {
                 case ..${
-                  for (i <- allFields.indices)
-                    yield cq"${allFields(i).mappedName} => $i"
+                  for (i <- mappedNames.indices)
+                    yield cq"${mappedNames(i)} => $i"
                 }
                 case _ =>
                   ${
@@ -418,8 +411,8 @@ object Macros2 {
 
             def visitEnd(index: Int) = {
               ..${
-                for(i <- allFields.indices if allFields(i).defaultValue.isDefined)
-                  yield q"this.storeValueIfNotFound($i, ${allFields(i).defaultValue.get})"
+                for(i <- defaultValues.indices if defaultValues(i).isDefined)
+                  yield q"this.storeValueIfNotFound($i, ${defaultValues(i).get})"
               }
 
               // Special-case 64 because java bit shifting ignores any RHS values above 63
@@ -428,10 +421,10 @@ object Macros2 {
                 if (numberOfFields <= 64) q"this.checkErrorMissingKeys(${if (numberOfFields == 64) -1 else (1L << numberOfFields) - 1})"
                 else q"this.checkErrorMissingKeys(${numberOfFields})"
               }) {
-                this.errorMissingKeys(${numberOfFields}, ${allFields.map(_.mappedName)})
+                this.errorMissingKeys(${numberOfFields}, ${mappedNames})
               }
 
-              ${constructClass(companion, fields, varargs)}
+              ${constructClass(targetType)}
             }
 
             def subVisitor: _root_.upickle.core.Visitor[_, _] = currentIndex match {
@@ -443,7 +436,7 @@ object Macros2 {
                     q"_root_.upickle.core.NoOpVisitor"
                 }
               case ..${
-                      for (i <- allFields.indices)
+                      for (i <- mappedNames.indices)
                         yield cq"$i => ${localReaders(i)} "
                     }
               case _ => throw new java.lang.IndexOutOfBoundsException(currentIndex.toString)
@@ -469,58 +462,76 @@ object Macros2 {
 
     def internal = q"${c.prefix}.Internal"
 
-    def wrapCaseN(companion: c.universe.Tree, fields: List[Field], varargs: Boolean, targetType: c.Type): c.universe.Tree = {
-      def serDfltVals(field: Field) = {
-        val b: Option[Boolean] = serializeDefaults(field.symbol).orElse(serializeDefaults(targetType.typeSymbol))
+    def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+                  targetType: c.Type): c.universe.Tree = {
+      def serDfltVals(symbol: Symbol) = {
+        val b: Option[Boolean] = serializeDefaults(symbol).orElse(serializeDefaults(targetType.typeSymbol))
         b match {
           case Some(b) => q"${b}"
           case None => q"${c.prefix}.serializeDefaults"
         }
       }
 
-      def write(field: Field, outer: c.universe.Tree): List[c.universe.Tree] = {
-        val select = Select(outer, TermName(field.name))
-        field.flatten match {
-          case Flatten.Class(_, fields, _) =>
-            fields.flatMap(write(_, select))
-          case Flatten.Map =>
-            val TypeRef(_, _, _ :: valueType :: Nil) = field.tpe
-            q"""
-               $select.foreach { case (key, value) =>
-                 this.writeSnippetMappedName[R, $valueType](
-                   ctx,
-                   key.toString,
-                   implicitly[${c.prefix}.Writer[$valueType]],
-                   value
-                 )
-               }
-             """ :: Nil
-          case Flatten.None =>
-            val snippet =
-              q"""
-            this.writeSnippetMappedName[R, ${field.tpe}](
-               ctx,
-               ${c.prefix}.objectAttributeKeyWriteMap(${field.mappedName}),
-               implicitly[${c.prefix}.Writer[${field.tpe}]],
-               $select
-             )
-            """
-            val default = if (field.defaultValue.isEmpty) snippet
-            else q"""if (${serDfltVals(field)} || $select != ${field.defaultValue.get}) $snippet"""
-            default :: Nil
+      def write(tpe: c.Type, outer: c.universe.Tree): List[c.universe.Tree] = {
+        val symbols = getSymbols(tpe)
+        symbols.zipWithIndex.flatMap { case (symbol, i) =>
+          val (mappedName, tpeOfField, defaultValue) = getSymbolDetail(symbol, i, tpe)
+          val select = Select(outer, TermName(symbol.name.toString))
+
+          symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
+            case Some(_) =>
+              if (isFlattableCollection(tpeOfField)) {
+                val TypeRef(_, _, _ :: valueType :: Nil) = tpeOfField
+                q"""
+                  $select.foreach { case (key, value) =>
+                  this.writeSnippetMappedName[R, $valueType](
+                    ctx,
+                    key.toString,
+                    implicitly[${c.prefix}.Writer[$valueType]],
+                    value
+                    )
+                  }
+                """ :: Nil
+              } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
+                write(tpeOfField, select)
+              }
+              else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+            case None =>
+              val snippet =
+                q"""
+                  this.writeSnippetMappedName[R, ${tpeOfField}](
+                     ctx,
+                     ${c.prefix}.objectAttributeKeyWriteMap(${mappedName}),
+                     implicitly[${c.prefix}.Writer[${tpeOfField}]],
+                     $select
+                   )
+                """
+              val default = if (defaultValue.isEmpty) snippet
+              else q"""if (${serDfltVals(symbol)} || $select != ${defaultValue.get}) $snippet"""
+              default :: Nil
+          }
         }
       }
 
-      def getLength(field: Field, outer: c.universe.Tree): List[c.universe.Tree] = {
-        val select = Select(outer, TermName(field.name))
-        field.flatten match {
-          case Flatten.Class(_, fields, _) => fields.flatMap(getLength(_, select))
-          case Flatten.Map => q"${select}.size" :: Nil
-          case Flatten.None =>
-            (
-              if (field.defaultValue.isEmpty) q"1"
-              else q"""if (${serDfltVals(field)} || ${select} != ${field.defaultValue}.get) 1 else 0"""
-            ) :: Nil
+      def getLength(tpe: c.Type, outer: c.universe.Tree): List[c.universe.Tree] = {
+        val symbols = getSymbols(tpe)
+        symbols.zipWithIndex.flatMap { case (symbol, i) =>
+          val (_, tpeOfField, defaultValue) = getSymbolDetail(symbol, i, tpe)
+          val select = Select(outer, TermName(symbol.name.toString))
+          symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
+            case Some(_) =>
+              if (isFlattableCollection(tpeOfField)) {
+                q"${select}.size" :: Nil
+              }
+              else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
+                getLength(tpeOfField, select)
+              }
+              else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+            case None =>
+              val snippet = if (defaultValue.isEmpty) q"1"
+              else q"""if (${serDfltVals(symbol)} || $select != ${defaultValue.get}) 1 else 0"""
+              snippet :: Nil
+          }
         }
       }
 
@@ -528,7 +539,7 @@ object Macros2 {
         new ${c.prefix}.CaseClassWriter[$targetType]{
           def length(v: $targetType) = {
             ${
-              fields.flatMap(getLength(_, q"v"))
+              getLength(targetType, q"v")
                 .foldLeft[Tree](q"0") { case (prev, next) => q"$prev + $next" }
             }
           }
@@ -536,13 +547,13 @@ object Macros2 {
             if (v == null) out.visitNull(-1)
             else {
               val ctx = out.visitObject(length(v), true, -1)
-              ..${fields.flatMap(write(_, q"v"))}
+              ..${write(targetType, q"v")}
               ctx.visitEnd(-1)
             }
           }
           def writeToObject[R](ctx: _root_.upickle.core.ObjVisitor[_, R],
                                v: $targetType): Unit = {
-            ..${fields.flatMap(write(_, q"v"))}
+            ..${write(targetType, q"v")}
           }
         }
       """
