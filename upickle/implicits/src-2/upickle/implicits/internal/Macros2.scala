@@ -190,7 +190,7 @@ object Macros2 {
 
     private def applyTypeArguments(tpe: c.Type, appliedTpe: c.Type): c.Type = {
       val typeParams = tpe.typeSymbol.asClass.typeParams
-      val typeArguments = tpe.typeArgs
+      val typeArguments = tpe.dealias.asInstanceOf[TypeRef].args
       if (appliedTpe.typeSymbol != definitions.RepeatedParamClass) {
         appliedTpe.substituteTypes(typeParams, typeArguments)
       } else {
