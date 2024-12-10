@@ -471,6 +471,8 @@ object Macros {
       q"${c.prefix}.Writer.merge[$targetType](..$subtree)"
     }
   }
+
+  @deprecated("Use one's from Macros2.scala")
   def macroRImpl[T, R[_]](c0: scala.reflect.macros.blackbox.Context)
                          (implicit e1: c0.WeakTypeTag[T], e2: c0.WeakTypeTag[R[_]]): c0.Expr[R[T]] = {
     import c0.universe._
@@ -482,6 +484,7 @@ object Macros {
     c0.Expr[R[T]](res)
   }
 
+  @deprecated("Use one's from Macros2.scala")
   def macroWImpl[T, W[_]](c0: scala.reflect.macros.blackbox.Context)
                          (implicit e1: c0.WeakTypeTag[T], e2: c0.WeakTypeTag[W[_]]): c0.Expr[W[T]] = {
     import c0.universe._
