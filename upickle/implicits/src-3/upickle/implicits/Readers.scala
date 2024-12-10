@@ -24,9 +24,11 @@ trait ReadersVersionSpecific
     def keyToIndex(x: String): Int
     def allKeysArray: Array[String]
     def storeDefaults(x: upickle.implicits.BaseCaseObjectContext): Unit
-    trait ObjectContext extends ObjVisitor[Any, T] with BaseCaseObjectContext{
+    trait ObjectContext extends ObjVisitor[Any, T] with BaseCaseObjectContext {
       private val params = new Array[Any](paramCount)
-      private val map = scala.collection.mutable.Map.empty[String, Any] 
+      private val map = scala.collection.mutable.Map.empty[String, Any]
+      private var currentKey = ""
+      protected var storeToMap = false
 
       def storeAggregatedValue(currentIndex: Int, v: Any): Unit = 
         if (currentIndex == -1) {
@@ -54,7 +56,7 @@ trait ReadersVersionSpecific
           if (hasFlattenOnMap) {
             storeToMap = true
           } else if (!allowUnknownKeys) {
-            throw new upickle.core.Abort("Unknown Key: " + currentKey.toString)
+            throw new upickle.core.Abort("Unknown Key: " + currentKey)
           }
         }
 
@@ -68,11 +70,32 @@ trait ReadersVersionSpecific
 
         construct(params, map)
     }
+
     override def visitObject(length: Int,
                              jsonableKeys: Boolean,
                              index: Int) =
-      if (paramCount <= 64) new CaseObjectContext[T](paramCount) with ObjectContext
-      else new HugeCaseObjectContext[T](paramCount) with ObjectContext
+      if (paramCount <= 64) new CaseObjectContext[T](paramCount) with ObjectContext {
+        override def visitValue(v: Any, index: Int): Unit = {
+          if ((currentIndex != -1) && ((found & (1L << currentIndex)) == 0)) {
+            storeAggregatedValue(currentIndex, v)
+            found |= (1L << currentIndex)
+          }
+          else if (storeToMap) {
+            storeAggregatedValue(currentIndex, v)
+          }
+        }
+      }
+      else new HugeCaseObjectContext[T](paramCount) with ObjectContext {
+        override def visitValue(v: Any, index: Int): Unit = {
+          if ((currentIndex != -1) && ((found(currentIndex / 64) & (1L << currentIndex)) == 0)) {
+            storeAggregatedValue(currentIndex, v)
+            found(currentIndex / 64) |= (1L << currentIndex)
+          }
+          else if (storeToMap) {
+            storeAggregatedValue(currentIndex, v)
+          }
+        }
+      }
   }
 
   inline def macroR[T](using m: Mirror.Of[T]): Reader[T] = inline m match {

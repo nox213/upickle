@@ -346,6 +346,32 @@ object Macros2 {
         loop(constructedTpe, 0)._1
       }
 
+      val visitValueDef =
+        if (numberOfFields <= 64)
+          q"""
+            override def visitValue(v: Any, index: Int): Unit = {
+              if ((currentIndex != -1) && ((found & (1L << currentIndex)) == 0)) {
+                storeAggregatedValue(currentIndex, v)
+                found |= (1L << currentIndex)
+              }
+              else if (storeToMap) {
+                storeAggregatedValue(currentIndex, v)
+              }
+            }
+          """
+        else
+          q"""
+            override def visitValue(v: Any, index: Int): Unit = {
+              if ((currentIndex != -1) && ((found(currentIndex / 64) & (1L << currentIndex)) == 0)) {
+                storeAggregatedValue(currentIndex, v)
+                found(currentIndex / 64) |= (1L << currentIndex)
+              }
+              else if (storeToMap) {
+                storeAggregatedValue(currentIndex, v)
+              }
+            }
+          """
+
       q"""
         ..${
           for (i <- types.indices)
@@ -360,6 +386,11 @@ object Macros2 {
         }
         new ${c.prefix}.CaseClassReader[$targetType] {
           override def visitObject(length: Int, jsonableKeys: Boolean, index: Int) = new ${if (numberOfFields <= 64) tq"_root_.upickle.implicits.CaseObjectContext[$targetType]" else tq"_root_.upickle.implicits.HugeCaseObjectContext[$targetType]"}(${numberOfFields}) {
+            var currentKey = ""
+            var storeToMap = false
+
+            $visitValueDef
+
             ..${
               for (i <- types.indices)
               yield q"private[this] var ${aggregates(i)}: ${types(i)} = _"

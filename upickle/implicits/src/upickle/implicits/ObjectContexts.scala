@@ -4,9 +4,6 @@ import upickle.core.ObjVisitor
 
 
 trait BaseCaseObjectContext {
-  var currentKey = ""
-  var storeToMap = false
-
   def storeAggregatedValue(currentIndex: Int, v: Any): Unit
 
   def visitKey(index: Int) = _root_.upickle.core.StringVisitor
@@ -27,9 +24,6 @@ abstract class CaseObjectContext[V](fieldCount: Int) extends ObjVisitor[Any, V] 
     if ((currentIndex != -1) && ((found & (1L << currentIndex)) == 0)) {
       storeAggregatedValue(currentIndex, v)
       found |= (1L << currentIndex)
-    }
-    else if (storeToMap) {
-      storeAggregatedValue(currentIndex, v)
     }
   }
 
@@ -62,9 +56,6 @@ abstract class HugeCaseObjectContext[V](fieldCount: Int) extends ObjVisitor[Any,
     if ((currentIndex != -1) && ((found(currentIndex / 64) & (1L << currentIndex)) == 0)) {
       storeAggregatedValue(currentIndex, v)
       found(currentIndex / 64) |= (1L << currentIndex)
-    }
-    else if (storeToMap) {
-      storeAggregatedValue(currentIndex, v)
     }
   }
 
