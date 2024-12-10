@@ -21,7 +21,7 @@ object Macros2 {
 
   trait DeriveDefaults[M[_]] {
     val c: scala.reflect.macros.blackbox.Context
-    private[upickle] def fail(tpe: c.Type, s: String) = c.abort(c.enclosingPosition, s)
+    private[upickle] def fail(s: String) = c.abort(c.enclosingPosition, s)
 
     import c.universe._
     private[upickle] def companionTree(tpe: c.Type): Tree = {
@@ -33,7 +33,7 @@ object Macros2 {
           s"[[${clsSymbol.name}]]. This may be due to a bug in scalac (SI-7567) " +
           "that arises when a case class within a function is upickle. As a " +
           "workaround, move the declaration to the module-level."
-        fail(tpe, msg)
+        fail(msg)
       } else {
         val symTab = c.universe.asInstanceOf[reflect.internal.SymbolTable]
         val pre = tpe.asInstanceOf[symTab.Type].prefix.asInstanceOf[Type]
@@ -71,7 +71,6 @@ object Macros2 {
       val mod2 = c.universe.internal.gen.mkAttributedRef(pre, mod)
 
       annotate(tpe)(wrapObject(mod2))
-
     }
 
     private[upickle] def mergeTrait(tagKey: Option[String], subtrees: Seq[Tree], subtypes: Seq[Type], targetType: c.Type): Tree
@@ -89,14 +88,14 @@ object Macros2 {
       val clsSymbol = tpe.typeSymbol.asClass
 
       if (!clsSymbol.isSealed) {
-        fail(tpe, s"[error] The referenced trait [[${clsSymbol.name}]] must be sealed.")
+        fail(s"[error] The referenced trait [[${clsSymbol.name}]] must be sealed.")
       }else if (clsSymbol.knownDirectSubclasses.filter(!_.toString.contains("<local child>")).isEmpty) {
         val msg =
           s"The referenced trait [[${clsSymbol.name}]] does not have any sub-classes. This may " +
             "happen due to a limitation of scalac (SI-7046). To work around this, " +
             "try manually specifying the sealed trait picklers as described in " +
             "https://com-lihaoyi.github.io/upickle/#ManualSealedTraitPicklers"
-        fail(tpe, msg)
+        fail(msg)
       }else{
         val tagKey = customKey(clsSymbol)
         val subTypes = fleshedOutSubtypes(tpe).toSeq.sortBy(_.typeSymbol.fullName)
@@ -156,7 +155,7 @@ object Macros2 {
             else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
               getFields(tpeOfField)
             }
-            else fail(tpeOfField, s"Invalid type for flattening getField: $tpeOfField.")
+            else fail(s"Invalid type for flattening getField: $tpeOfField.")
           case None =>
             List((param.name.toString, mappedName, tpeOfField, param, defaultValue, false))
         }
@@ -172,7 +171,7 @@ object Macros2 {
 
       tpe.members.find(x => x.isMethod && x.asMethod.isPrimaryConstructor) match {
         case Some(primaryConstructor) => primaryConstructor.asMethod.paramLists.flatten
-        case None => fail(tpe, "Can't find primary constructor of " + tpe)
+        case None => fail("Can't find primary constructor of " + tpe)
       }
     }
 
@@ -201,10 +200,10 @@ object Macros2 {
 
     private def validateFlattenAnnotation(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)]): Unit = {
       if (fields.count { case(_, _, _, _, _, isCollection) => isCollection } > 1) {
-        fail(NoType, "Only one collection can be annotated with @upickle.implicits.flatten in the same level")
+        fail("Only one collection can be annotated with @upickle.implicits.flatten in the same level")
       }
       if (fields.map { case (_, mappedName, _, _, _, _) => mappedName }.distinct.length != fields.length) {
-        fail(NoType, "There are multiple fields with the same key")
+        fail("There are multiple fields with the same key")
       }
     }
 
@@ -221,7 +220,7 @@ object Macros2 {
           sealedParents,
           customKey,
           (_: c.Symbol).name.toString,
-          fail(tpe, _),
+          fail,
         )
 
         val sealedClassSymbol: Option[Symbol] = sealedParents.find(_ == tpe.typeSymbol)
@@ -263,15 +262,15 @@ object Macros2 {
 
     private def customKey(sym: c.Symbol): Option[String] = {
         sym.annotations
-          .find(_.tpe == typeOf[key])
-          .flatMap(_.scalaArgs.headOption)
+          .find(_.tree.tpe == typeOf[key])
+          .flatMap(_.tree.children.tail.headOption)
           .map{case Literal(Constant(s)) => s.toString}
     }
 
     private[upickle] def serializeDefaults(sym: c.Symbol): Option[Boolean] = {
         sym.annotations
-          .find(_.tpe == typeOf[upickle.implicits.serializeDefaults])
-          .flatMap(_.scalaArgs.headOption)
+          .find(_.tree.tpe == typeOf[upickle.implicits.serializeDefaults])
+          .flatMap(_.tree.children.tail.headOption)
           .map{case Literal(Constant(s)) => s.asInstanceOf[Boolean]}
     }
 
@@ -326,7 +325,7 @@ object Macros2 {
                     val (term, nextIdx) = loop(tpeOfField, idx)
                     (term :: terms, nextIdx)
                   }
-                  else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+                  else fail(s"Invalid type for flattening: $tpeOfField.")
                 case None =>
                   val termName = TermName(s"aggregated$idx")
                   val term = if (symbol == symbols.last && varArgs) q"$termName:_*" else q"$termName"
@@ -526,7 +525,7 @@ object Macros2 {
               } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
                 write(tpeOfField, select)
               }
-              else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+              else fail(s"Invalid type for flattening: $tpeOfField.")
             case None =>
               val snippet =
                 q"""
@@ -557,7 +556,7 @@ object Macros2 {
               else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
                 getLength(tpeOfField, select)
               }
-              else fail(tpeOfField, s"Invalid type for flattening: $tpeOfField.")
+              else fail(s"Invalid type for flattening: $tpeOfField.")
             case None =>
               val snippet = if (defaultValue.isEmpty) q"1"
               else q"""if (${serDfltVals(symbol)} || $select != ${defaultValue.get}) 1 else 0"""
