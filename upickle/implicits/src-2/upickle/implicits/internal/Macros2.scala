@@ -150,7 +150,7 @@ object Macros2 {
         val (mappedName, tpeOfField, defaultValue) = getSymbolDetail(param, i, tpe)
         param.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
           case Some(_) =>
-            if (isFlattableCollection(tpeOfField))
+            if (isCollectionFlattenable(tpeOfField))
               List((param.name.toString, mappedName, tpeOfField, param, defaultValue, true))
             else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
               getFields(tpeOfField)
@@ -256,7 +256,7 @@ object Macros2 {
       }
     }
 
-    private[upickle] def isFlattableCollection(tpe: c.Type): Boolean = {
+    private[upickle] def isCollectionFlattenable(tpe: c.Type): Boolean = {
       tpe.typeSymbol == typeOf[collection.immutable.Map[_, _]].typeSymbol
     }
 
@@ -296,16 +296,17 @@ object Macros2 {
       val (mappedNames, types, defaultValues) = fields.toArray.filter { case (_, _, _, _, _, isCollection) => !isCollection }.map {
         case (_, mappedName, tpe, _, defaultValue, _) => (mappedName, tpe, defaultValue)
       }.unzip3
-      val (hasFlattenOnMap, valueTypeOfMap) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
+      val (hasFlattenOnMap, keyTypeOfMap, valueTypeOfMap) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
         case Some(f) =>
-          val TypeRef(_, _, _ :: valueType :: Nil) = f._3
-          (true, valueType)
-        case None => (false, NoType)
+          val TypeRef(_, _, keyType :: valueType :: Nil) = f._3
+          (true, keyType, valueType)
+        case None => (false, NoType, NoType)
       }
       val numberOfFields = mappedNames.length
       val (localReaders, aggregates) = mappedNames.zipWithIndex.map { case (_, idx) =>
             (TermName(s"localReader$idx"), TermName(s"aggregated$idx"))
         }.unzip
+      val readKey = if (keyTypeOfMap =:= typeOf[String]) q"currentKey" else q"read(currentKey)(implicitly[${c.prefix}.Reader[$keyTypeOfMap]])"
 
       def constructClass(constructedTpe: c.Type): c.universe.Tree = {
         def loop(tpe: c.Type, offset: Int): (c.universe.Tree, Int) = {
@@ -317,7 +318,7 @@ object Macros2 {
               val (_, tpeOfField, _) = getSymbolDetail(symbol, 0, tpe)
               symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
                 case Some(_) =>
-                  if (isFlattableCollection(tpeOfField)) {
+                  if (isCollectionFlattenable(tpeOfField)) {
                     val termName = TermName(s"aggregatedMap")
                     val term = q"$termName.toMap"
                     (term :: terms, idx)
@@ -397,7 +398,7 @@ object Macros2 {
             ..${
               if (hasFlattenOnMap)
                 List(
-                  q"private[this] lazy val aggregatedMap: scala.collection.mutable.ListBuffer[(String, $valueTypeOfMap)] = scala.collection.mutable.ListBuffer.empty",
+                  q"private[this] lazy val aggregatedMap: scala.collection.mutable.ListBuffer[($keyTypeOfMap, $valueTypeOfMap)] = scala.collection.mutable.ListBuffer.empty",
                 )
               else Nil
             }
@@ -409,7 +410,7 @@ object Macros2 {
                 }
               case ..${
                   if (hasFlattenOnMap)
-                    List(cq"-1 => aggregatedMap += currentKey -> v.asInstanceOf[$valueTypeOfMap]")
+                    List(cq"-1 => aggregatedMap += $readKey -> v.asInstanceOf[$valueTypeOfMap]")
                   else Nil
                 }
               case _ => throw new java.lang.IndexOutOfBoundsException(currentIndex.toString)
@@ -510,13 +511,14 @@ object Macros2 {
 
           symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
             case Some(_) =>
-              if (isFlattableCollection(tpeOfField)) {
-                val TypeRef(_, _, _ :: valueType :: Nil) = tpeOfField
+              if (isCollectionFlattenable(tpeOfField)) {
+                val TypeRef(_, _, keyType :: valueType :: Nil) = tpeOfField
+                val writeKey = if (keyType =:= typeOf[String]) q"key" else q"upickle.default.write(key)(implicitly[${c.prefix}.Writer[$keyType]])"
                 q"""
                   $select.foreach { case (key, value) =>
                   this.writeSnippetMappedName[R, $valueType](
                     ctx,
-                    key.toString,
+                    $writeKey,
                     implicitly[${c.prefix}.Writer[$valueType]],
                     value
                     )
@@ -550,7 +552,7 @@ object Macros2 {
           val select = Select(outer, TermName(symbol.name.toString))
           symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
             case Some(_) =>
-              if (isFlattableCollection(tpeOfField)) {
+              if (isCollectionFlattenable(tpeOfField)) {
                 q"${select}.size" :: Nil
               }
               else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {

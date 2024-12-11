@@ -202,6 +202,15 @@ object Flatten {
   object NestedWithDefault {
     implicit val rw: RW[NestedWithDefault] = upickle.default.macroRW
   }
+
+  case class KeyClass(id: Int, name: String)
+  object KeyClass {
+    implicit val rw: RW[KeyClass] = upickle.default.macroRW
+  }
+  case class FlattenWithKey(@upickle.implicits.flatten n: Map[KeyClass, String])
+  object FlattenWithKey {
+    implicit val rw: RW[FlattenWithKey] = upickle.default.macroRW
+  }
 }
 
 object MacroTests extends TestSuite {
@@ -969,12 +978,21 @@ object MacroTests extends TestSuite {
       import Flatten._
       val value = HasMap(Map.empty, 10)
       rw(value, """{"i":10}""")
+      write(1)
     }
 
     test("flattenWithDefaults") {
       import Flatten._
       val value = FlattenWithDefault(10, NestedWithDefault(l = "default"))
       rw(value, """{"i":10,"l":"default"}""")
+    }
+
+    test("flattenWithKey") {
+      import Flatten._
+      val value = FlattenWithKey(Map(KeyClass(1, "a") -> "value1", KeyClass(2, "b") -> "value2"))
+      println(write(KeyClass(1, "a")))
+      println(write(value))
+      rw(value, """{"{\"id\":1,\"name\":\"a\"}":"value1","{\"id\":2,\"name\":\"b\"}":"value2"}""")
     }
   }
 }
