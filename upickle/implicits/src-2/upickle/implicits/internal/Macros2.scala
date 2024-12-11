@@ -257,8 +257,16 @@ object Macros2 {
     }
 
     private[upickle] def isCollectionFlattenable(tpe: c.Type): Boolean = {
-      tpe.typeSymbol == typeOf[collection.immutable.Map[_, _]].typeSymbol
+      (tpe <:< typeOf[collection.Map[_, _]]
+        || tpe <:< typeOf[Iterable[(_, _)]])
     }
+
+    private[upickle] def extractKeyValueTypes(tpe: c.Type): (Symbol, c.Type, c.Type) =
+      tpe match {
+        case TypeRef(_, collection, keyType :: valueType :: Nil) => (collection, keyType, valueType)
+        case TypeRef(_, collection, TypeRef(_, _, keyType :: valueType :: Nil) :: Nil) => (collection, keyType, valueType)
+        case _ => fail(s"Fail to extract key value from $tpe")
+      }
 
     private def customKey(sym: c.Symbol): Option[String] = {
         sym.annotations
@@ -296,17 +304,17 @@ object Macros2 {
       val (mappedNames, types, defaultValues) = fields.toArray.filter { case (_, _, _, _, _, isCollection) => !isCollection }.map {
         case (_, mappedName, tpe, _, defaultValue, _) => (mappedName, tpe, defaultValue)
       }.unzip3
-      val (hasFlattenOnMap, keyTypeOfMap, valueTypeOfMap) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
+      val (hasFlattenOnCollection, collection, keyTypeOfCollection, valueTypeOfCollection) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
         case Some(f) =>
-          val TypeRef(_, _, keyType :: valueType :: Nil) = f._3
-          (true, keyType, valueType)
-        case None => (false, NoType, NoType)
+          val (collection, key, value) = extractKeyValueTypes(f._3)
+          (true, collection, key, value)
+        case None => (false, NoSymbol, NoType, NoType)
       }
       val numberOfFields = mappedNames.length
       val (localReaders, aggregates) = mappedNames.zipWithIndex.map { case (_, idx) =>
             (TermName(s"localReader$idx"), TermName(s"aggregated$idx"))
         }.unzip
-      val readKey = if (keyTypeOfMap =:= typeOf[String]) q"currentKey" else q"read(currentKey)(implicitly[${c.prefix}.Reader[$keyTypeOfMap]])"
+      val readKey = if (keyTypeOfCollection =:= typeOf[String]) q"currentKey" else q"read(currentKey)(implicitly[${c.prefix}.Reader[$keyTypeOfCollection]])"
 
       def constructClass(constructedTpe: c.Type): c.universe.Tree = {
         def loop(tpe: c.Type, offset: Int): (c.universe.Tree, Int) = {
@@ -319,8 +327,8 @@ object Macros2 {
               symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
                 case Some(_) =>
                   if (isCollectionFlattenable(tpeOfField)) {
-                    val termName = TermName(s"aggregatedMap")
-                    val term = q"$termName.toMap"
+                    val termName = TermName(s"aggregatedCollection")
+                    val term = q"${Ident(TermName(collection.name.toString))}.from($termName)"
                     (term :: terms, idx)
                   } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
                     val (term, nextIdx) = loop(tpeOfField, idx)
@@ -378,9 +386,9 @@ object Macros2 {
           yield q"private[this] lazy val ${localReaders(i)} = implicitly[${c.prefix}.Reader[${types(i)}]]"
         }
         ..${
-          if (hasFlattenOnMap)
+          if (hasFlattenOnCollection)
             List(
-              q"private[this] lazy val localReaderMap = implicitly[${c.prefix}.Reader[$valueTypeOfMap]]",
+              q"private[this] lazy val localReaderCollection = implicitly[${c.prefix}.Reader[$valueTypeOfCollection]]",
             )
           else Nil
         }
@@ -396,9 +404,9 @@ object Macros2 {
               yield q"private[this] var ${aggregates(i)}: ${types(i)} = _"
             }
             ..${
-              if (hasFlattenOnMap)
+              if (hasFlattenOnCollection)
                 List(
-                  q"private[this] lazy val aggregatedMap: scala.collection.mutable.ListBuffer[($keyTypeOfMap, $valueTypeOfMap)] = scala.collection.mutable.ListBuffer.empty",
+                  q"private[this] lazy val aggregatedCollection: scala.collection.mutable.ListBuffer[($keyTypeOfCollection, $valueTypeOfCollection)] = scala.collection.mutable.ListBuffer.empty",
                 )
               else Nil
             }
@@ -409,8 +417,8 @@ object Macros2 {
                   yield cq"$i => ${aggregates(i)} = v.asInstanceOf[${types(i)}]"
                 }
               case ..${
-                  if (hasFlattenOnMap)
-                    List(cq"-1 => aggregatedMap += $readKey -> v.asInstanceOf[$valueTypeOfMap]")
+                  if (hasFlattenOnCollection)
+                    List(cq"-1 => aggregatedCollection += $readKey -> v.asInstanceOf[$valueTypeOfCollection]")
                   else Nil
                 }
               case _ => throw new java.lang.IndexOutOfBoundsException(currentIndex.toString)
@@ -426,7 +434,7 @@ object Macros2 {
                 }
                 case _ =>
                   ${
-                    (allowUnknownKeysAnnotation, hasFlattenOnMap) match {
+                    (allowUnknownKeysAnnotation, hasFlattenOnCollection) match {
                       case (_, true) => q"storeToMap = true; -1"
                       case (None, false) =>
                         q"""
@@ -461,8 +469,8 @@ object Macros2 {
             def subVisitor: _root_.upickle.core.Visitor[_, _] = currentIndex match {
               case -1 =>
                 ${
-                  if (hasFlattenOnMap)
-                    q"localReaderMap"
+                  if (hasFlattenOnCollection)
+                    q"localReaderCollection"
                   else
                     q"_root_.upickle.core.NoOpVisitor"
                 }
@@ -512,7 +520,7 @@ object Macros2 {
           symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
             case Some(_) =>
               if (isCollectionFlattenable(tpeOfField)) {
-                val TypeRef(_, _, keyType :: valueType :: Nil) = tpeOfField
+                val (_, keyType, valueType) = extractKeyValueTypes(tpeOfField)
                 val writeKey = if (keyType =:= typeOf[String]) q"key" else q"upickle.default.write(key)(implicitly[${c.prefix}.Writer[$keyType]])"
                 q"""
                   $select.foreach { case (key, value) =>

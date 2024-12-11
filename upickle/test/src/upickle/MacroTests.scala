@@ -211,6 +211,11 @@ object Flatten {
   object FlattenWithKey {
     implicit val rw: RW[FlattenWithKey] = upickle.default.macroRW
   }
+
+  case class FlattenSeq(@upickle.implicits.flatten n: Seq[(String, Int)])
+  object FlattenSeq {
+    implicit val rw: RW[FlattenSeq] = upickle.default.macroRW
+  }
 }
 
 object MacroTests extends TestSuite {
@@ -993,6 +998,12 @@ object MacroTests extends TestSuite {
       println(write(KeyClass(1, "a")))
       println(write(value))
       rw(value, """{"{\"id\":1,\"name\":\"a\"}":"value1","{\"id\":2,\"name\":\"b\"}":"value2"}""")
+    }
+
+    test("flattenSeq") {
+      import Flatten._
+      val value = FlattenSeq(Seq("a" -> 1, "b" -> 2))
+      rw(value, """{"a":1,"b":2}""")
     }
   }
 }
