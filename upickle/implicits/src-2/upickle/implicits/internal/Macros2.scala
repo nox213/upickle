@@ -256,10 +256,8 @@ object Macros2 {
       }
     }
 
-    private[upickle] def isCollectionFlattenable(tpe: c.Type): Boolean = {
-      (tpe <:< typeOf[collection.Map[_, _]]
-        || tpe <:< typeOf[Iterable[(_, _)]])
-    }
+    private[upickle] def isCollectionFlattenable(tpe: c.Type): Boolean =
+        tpe <:< typeOf[Iterable[(_, _)]]
 
     private[upickle] def extractKeyValueTypes(tpe: c.Type): (Symbol, c.Type, c.Type) =
       tpe match {
@@ -328,7 +326,8 @@ object Macros2 {
                 case Some(_) =>
                   if (isCollectionFlattenable(tpeOfField)) {
                     val termName = TermName(s"aggregatedCollection")
-                    val term = q"${Ident(TermName(collection.name.toString))}.from($termName)"
+                    val fullyQualifiedCollection = c.parse(collection.fullName)
+                    val term = q"$fullyQualifiedCollection($termName.toList :_*)"
                     (term :: terms, idx)
                   } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
                     val (term, nextIdx) = loop(tpeOfField, idx)
