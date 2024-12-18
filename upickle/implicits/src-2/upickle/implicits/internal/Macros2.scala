@@ -133,11 +133,18 @@ object Macros2 {
       companion.tpe.member(TermName("apply")).info
 
       validateFlattenAnnotation(fields)
+      val (mappedNames, types, defaultValues) = fields.toArray.filter { case (_, _, _, _, _, isCollection) => !isCollection }.map {
+        case (_, mappedName, tpe, _, defaultValue, _) => (mappedName, tpe, defaultValue)
+      }.unzip3
+      val collectionFlattened = fields.find { case (_, _, _, _, _, isCollection) => isCollection }.map(_._3)
 
       val derive =
         // Otherwise, reading and writing are kinda identical
         wrapCaseN(
-          fields,
+          mappedNames,
+          types,
+          defaultValues,
+          collectionFlattened,
           targetType = tpe,
         )
 
@@ -155,7 +162,7 @@ object Macros2 {
             else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
               getFields(tpeOfField)
             }
-            else fail(s"Invalid type for flattening getField: $tpeOfField.")
+            else fail(s"Invalid type for flattening: $tpeOfField.")
           case None =>
             List((param.name.toString, mappedName, tpeOfField, param, defaultValue, false))
         }
@@ -257,7 +264,7 @@ object Macros2 {
     }
 
     private[upickle] def isCollectionFlattenable(tpe: c.Type): Boolean =
-        tpe <:< typeOf[Iterable[(_, _)]]
+        tpe <:< typeOf[Iterable[(String, _)]]
 
     private[upickle] def extractKeyValueTypes(tpe: c.Type): (Symbol, c.Type, c.Type) =
       tpe match {
@@ -282,7 +289,10 @@ object Macros2 {
 
     private[upickle] def wrapObject(obj: Tree): Tree
 
-    private[upickle] def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+    private[upickle] def wrapCaseN(mappedNames: Array[String],
+                                   types: Array[c.Type],
+                                   defaultValues: Array[Option[c.Tree]],
+                                   collectionFlattened: Option[c.Type],
                                    targetType: c.Type): Tree
   }
 
@@ -291,7 +301,10 @@ object Macros2 {
     import c.universe._
     def wrapObject(t: c.Tree) = q"new ${c.prefix}.SingletonReader($t)"
 
-    def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+    def wrapCaseN(mappedNames: Array[String],
+                  types: Array[c.Type],
+                  defaultValues: Array[Option[c.Tree]],
+                  collectionFlattened: Option[c.Type],
                   targetType: c.Type): c.universe.Tree = {
       val allowUnknownKeysAnnotation = targetType.typeSymbol
         .annotations
@@ -299,12 +312,9 @@ object Macros2 {
         .flatMap(_.tree.children.tail.headOption)
         .map { case Literal(Constant(b)) => b.asInstanceOf[Boolean] }
 
-      val (mappedNames, types, defaultValues) = fields.toArray.filter { case (_, _, _, _, _, isCollection) => !isCollection }.map {
-        case (_, mappedName, tpe, _, defaultValue, _) => (mappedName, tpe, defaultValue)
-      }.unzip3
-      val (hasFlattenOnCollection, collection, keyTypeOfCollection, valueTypeOfCollection) = fields.find { case (_, _, _, _, _, isCollection) => isCollection } match {
-        case Some(f) =>
-          val (collection, key, value) = extractKeyValueTypes(f._3)
+      val (hasFlattenOnCollection, _, keyTypeOfCollection, valueTypeOfCollection) = collectionFlattened match {
+        case Some(tpe) =>
+          val (collection, key, value) = extractKeyValueTypes(tpe)
           (true, collection, key, value)
         case None => (false, NoSymbol, NoType, NoType)
       }
@@ -326,8 +336,8 @@ object Macros2 {
                 case Some(_) =>
                   if (isCollectionFlattenable(tpeOfField)) {
                     val termName = TermName(s"aggregatedCollection")
-                    val fullyQualifiedCollection = c.parse(collection.fullName)
-                    val term = q"$fullyQualifiedCollection($termName.toList :_*)"
+                    val companion = companionTree(tpeOfField)
+                    val term = q"$companion($termName.toList :_*)"
                     (term :: terms, idx)
                   } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
                     val (term, nextIdx) = loop(tpeOfField, idx)
@@ -500,7 +510,10 @@ object Macros2 {
 
     def internal = q"${c.prefix}.Internal"
 
-    def wrapCaseN(fields: List[(String, String, c.Type, Symbol, Option[c.Tree], Boolean)],
+    def wrapCaseN(mappedNames: Array[String],
+                  types: Array[c.Type],
+                  defaultValues: Array[Option[c.Tree]],
+                  collectionFlattened: Option[c.Type],
                   targetType: c.Type): c.universe.Tree = {
       def serDfltVals(symbol: Symbol) = {
         val b: Option[Boolean] = serializeDefaults(symbol).orElse(serializeDefaults(targetType.typeSymbol))

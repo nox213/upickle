@@ -16,7 +16,7 @@ trait ReadersVersionSpecific
   abstract class CaseClassReader3V2[T](paramCount: Int,
                                      missingKeyCount: Long,
                                      allowUnknownKeys: Boolean,
-                                     construct: (Array[Any], scala.collection.mutable.Map[String, Any]) => T) extends CaseClassReader[T] {
+                                     construct: (Array[Any], scala.collection.mutable.ListBuffer[(String, Any)]) => T) extends CaseClassReader[T] {
 
     def visitors0: (AnyRef, Array[AnyRef])
     lazy val (visitorMap, visitors) = visitors0
@@ -26,14 +26,14 @@ trait ReadersVersionSpecific
     def storeDefaults(x: upickle.implicits.BaseCaseObjectContext): Unit
     trait ObjectContext extends ObjVisitor[Any, T] with BaseCaseObjectContext {
       private val params = new Array[Any](paramCount)
-      private val map = scala.collection.mutable.Map.empty[String, Any]
+      private val collection = scala.collection.mutable.ListBuffer.empty[(String, Any)]
       private var currentKey = ""
       protected var storeToMap = false
 
       def storeAggregatedValue(currentIndex: Int, v: Any): Unit = 
         if (currentIndex == -1) {
           if (storeToMap) {
-            map(currentKey) = v
+            collection += (currentKey -> v)
           }
         } else {
           params(currentIndex) = v
@@ -68,7 +68,7 @@ trait ReadersVersionSpecific
         if (this.checkErrorMissingKeys(missingKeyCount))
           this.errorMissingKeys(paramCount, allKeysArray)
 
-        construct(params, map)
+        construct(params, collection)
     }
 
     override def visitObject(length: Int,
@@ -107,7 +107,7 @@ trait ReadersVersionSpecific
         if (paramCount <= 64) if (paramCount == 64) -1 else (1L << paramCount) - 1
         else paramCount,
         macros.extractIgnoreUnknownKeys[T]().headOption.getOrElse(this.allowUnknownKeys),
-        (params: Array[Any], map :scala.collection.mutable.Map[String ,Any]) => macros.applyConstructor[T](params, map)
+        (params: Array[Any], collection :scala.collection.mutable.ListBuffer[(String ,Any)]) => macros.applyConstructor[T](params, collection)
       ){
         override def visitors0 = macros.allReaders[T, Reader]
         override def keyToIndex(x: String): Int = macros.keyToIndex[T](x)

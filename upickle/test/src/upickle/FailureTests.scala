@@ -40,6 +40,9 @@ object WrongTag {
 case class FlattenTwoMaps(@upickle.implicits.flatten map1: Map[String, String], @upickle.implicits.flatten map2: Map[String, String])
 case class ConflictingKeys(i: Int, @upickle.implicits.flatten cm: ConflictingMessage)
 case class ConflictingMessage(i: Int)
+object ConflictingMessage {
+  implicit def rw: upickle.default.ReadWriter[ConflictingMessage] = upickle.default.macroRW
+}
 case class MapWithNoneStringKey(@upickle.implicits.flatten map: Map[ConflictingMessage, String])
 
 object TaggedCustomSerializer{

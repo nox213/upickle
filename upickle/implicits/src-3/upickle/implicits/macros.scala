@@ -82,7 +82,7 @@ def allReadersImpl[T, R[_]](using Quotes, Type[T], Type[R]): Expr[(AnyRef, Array
   val fields = allFields[T]
   val (readerMap, readers) = fields.partitionMap { case (_, _, tpe, _, isFlattenMap) =>
     if (isFlattenMap) {
-      val valueTpe = tpe.typeArgs(1)
+      val (_, _, valueTpe) = extractKeyValueTypes(tpe)
       val readerTpe = TypeRepr.of[R].appliedTo(valueTpe)
       val reader = readerTpe.asType match {
         case '[t] => '{summonInline[t].asInstanceOf[AnyRef]}
@@ -135,7 +135,7 @@ def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, String, qu
     val substitutedTypeRepr = substituteTypeArgs(classTypeRepr, subsitituted = classTypeRepr.memberType(field))
     val typeSymbol = substitutedTypeRepr.typeSymbol
     if (flatten) {
-      if (isMap(substitutedTypeRepr)) {
+      if (isCollectionFlattenable(substitutedTypeRepr)) {
         (field, label, substitutedTypeRepr, defaults.get(label), true) :: Nil
       }
       else if (isCaseClass(typeSymbol)) {
@@ -218,9 +218,9 @@ def writeLengthImpl[T](thisOuter: Expr[upickle.core.Types with upickle.implicits
       if (flatten) {
         val subsitituted = substituteTypeArgs(classTypeRepr, subsitituted = classTypeRepr.memberType(field))
         val typeSymbol = subsitituted.typeSymbol
-        if (isMap(subsitituted)) {
+        if (isCollectionFlattenable(subsitituted)) {
           List(
-            '{${select.asExprOf[Map[_, _]]}.size}
+            '{${select.asExprOf[Iterable[(_, _)]]}.size}
           )
         }
         else if (isCaseClass(typeSymbol)) {
@@ -274,16 +274,13 @@ def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types with upickl
       val fieldTypeRepr = substituteTypeArgs(classTypeRepr, subsitituted = classTypeRepr.memberType(field))
       val typeSymbol = fieldTypeRepr.typeSymbol
       if (flatten) {
-        if (isMap(fieldTypeRepr)) {
-          val (keyTpe0, valueTpe0) = fieldTypeRepr.typeArgs match {
-            case key :: value :: Nil => (key, value) 
-            case _ => report.errorAndAbort(s"Unsupported type ${typeSymbol} for flattening", v.asTerm.pos)
-          }
+        if (isCollectionFlattenable(fieldTypeRepr)) {
+          val (_, keyTpe0, valueTpe0) = extractKeyValueTypes(fieldTypeRepr)
           val writerTpe0 = TypeRepr.of[W].appliedTo(valueTpe0)
           (keyTpe0.asType, valueTpe0.asType, writerTpe0.asType) match {
             case ('[keyTpe], '[valueTpe], '[writerTpe])=>
               val snippet = '{
-                ${select.asExprOf[Map[keyTpe, valueTpe]]}.foreach { (k, v) =>
+                ${select.asExprOf[Iterable[(keyTpe, valueTpe)]]}.foreach { (k, v) =>
                   ${self}.writeSnippetMappedName[R, valueTpe](
                     ${ctx},
                     k.toString,
@@ -308,7 +305,7 @@ def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types with upickl
             case _ =>
               report.errorAndAbort("Unsupported type for flattening", v)
           }
-        } else report.errorAndAbort(s"${typeSymbol} is not a case class or a immutable.Map", v.asTerm.pos)
+        } else report.errorAndAbort(s"${typeSymbol} is not a case class or a subtype of Iterable", v.asTerm.pos)
       }
       else {
         val tpe0 = fieldTypeRepr
@@ -379,8 +376,8 @@ def substituteTypeArgs(using Quotes)(tpe: quotes.reflect.TypeRepr, subsitituted:
   subsitituted.substituteTypes(tparams0 ,tpe.typeArgs)
 }
 
-inline def applyConstructor[T](params: Array[Any], map: scala.collection.mutable.Map[String, Any]): T = ${ applyConstructorImpl[T]('params, 'map) }
-def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Array[Any]], map: Expr[scala.collection.mutable.Map[String, Any]]): Expr[T] =
+inline def applyConstructor[T](params: Array[Any], collection: scala.collection.mutable.ListBuffer[(String, Any)]): T = ${ applyConstructorImpl[T]('params, 'collection) }
+def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Array[Any]], collection: Expr[scala.collection.mutable.ListBuffer[(String, Any)]]): Expr[T] =
   import quotes.reflect._
   def apply(tpe: TypeRepr, typeArgs: List[TypeRepr], offset: Int): (Term, Int) = {
     val companion: Symbol = tpe.classSymbol.get.companionModule
@@ -396,13 +393,13 @@ def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Arra
         val typeSymbol = appliedTpe.typeSymbol
         val flatten = extractFlatten(sym0)
         if (flatten) {
-          if (isMap(appliedTpe)) {
-            val keyTpe0 = appliedTpe.typeArgs.head
-            val valueTpe0 = appliedTpe.typeArgs(1)
+          if (isCollectionFlattenable(appliedTpe)) {
+            val (_, keyTpe0, valueTpe0) = extractKeyValueTypes(appliedTpe)
             (keyTpe0.asType, valueTpe0.asType) match {
               case ('[keyTpe], '[valueTpe]) =>
-                val typedMap =  '{${map}.asInstanceOf[collection.mutable.Map[keyTpe, valueTpe]]}.asTerm
-                val term = Select.unique(typedMap, "toMap")
+                val typedCollection =  '{${collection}.asInstanceOf[scala.collection.mutable.ListBuffer[(keyTpe, valueTpe)]]}.asTerm
+                val companionSym = typeSymbol.companionModule
+                val term = Select.overloaded(Ref(companionSym), "from", appliedTpe.typeArgs, List(typedCollection))
                 (term :: terms, i)
             }
           }
@@ -576,25 +573,30 @@ def validateFlattenAnnotationImpl[T](using Quotes, Type[T]): Expr[Unit] =
   import quotes.reflect._
   val fields = allFields[T]
   if (fields.count(_._5) > 1) {
-    report.errorAndAbort("Only one Map can be annotated with @upickle.implicits.flatten in the same level")
+    report.errorAndAbort("Only one collection can be annotated with @upickle.implicits.flatten in the same level")
   }
   if (fields.map(_._2).distinct.length != fields.length) {
     report.errorAndAbort("There are multiple fields with the same key")
   }
-  if (fields.exists {case (_, _, tpe, _, isFlattenMap) => isFlattenMap && !(tpe.typeArgs.head.dealias =:= TypeRepr.of[String].dealias)}) {
-    report.errorAndAbort("The key type of a Map annotated with @flatten must be String.")
-  }
   '{()}
 
-private def isMap(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean = {
+private def isCollectionFlattenable(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean = {
   import quotes.reflect._
-  tpe.typeSymbol == TypeRepr.of[collection.immutable.Map[_, _]].typeSymbol
+  tpe <:< TypeRepr.of[Iterable[(String, _)]]
 }
 
 private def isCaseClass(using Quotes)(typeSymbol: quotes.reflect.Symbol): Boolean = {
   import quotes.reflect._
   typeSymbol.isClassDef && typeSymbol.flags.is(Flags.Case)
 }
+
+private def extractKeyValueTypes(using Quotes)(tpe: quotes.reflect.TypeRepr): (quotes.reflect.TypeRepr, quotes.reflect.TypeRepr, quotes.reflect.TypeRepr) =
+  import quotes.reflect._
+  tpe match {
+    case AppliedType(tycon, keyType :: valueType :: Nil) => (tycon, keyType, valueType)
+    case AppliedType(tycon, AppliedType(_, keyType :: valueType :: Nil) :: Nil) => (tycon, keyType, valueType)
+    case _ => report.errorAndAbort(s"Fail to extract key value from $tpe")
+  }
 
 @deprecated
 def fieldLabelsImpl[T](using Quotes, Type[T]): Expr[List[(String, String)]] =
@@ -654,4 +656,3 @@ def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: Expr[Arra
     case t: TypeRef => apply(None)
     case t: TermRef => '{ ${ Ref(t.classSymbol.get.companionModule).asExprOf[Any] }.asInstanceOf[T] }
   }
-

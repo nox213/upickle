@@ -1,6 +1,6 @@
 package upickle.implicits
 
-trait MacrosCommon extends upickle.core.Config with upickle.core.Types{
+trait MacrosCommon extends upickle.core.Config with upickle.core.Types {
   val outerThis = this
 }
 
