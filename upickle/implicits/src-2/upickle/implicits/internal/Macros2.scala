@@ -19,7 +19,7 @@ import language.existentials
 @nowarn("cat=deprecation")
 object Macros2 {
 
-  trait DeriveDefaults[M[_]] {
+  private[upickle] trait DeriveDefaults[M[_]] {
     val c: scala.reflect.macros.blackbox.Context
     private[upickle] def fail(s: String) = c.abort(c.enclosingPosition, s)
 
@@ -296,7 +296,7 @@ object Macros2 {
                                    targetType: c.Type): Tree
   }
 
-  abstract class Reading[M[_]] extends DeriveDefaults[M] {
+  private[upickle] abstract class Reading[M[_]] extends DeriveDefaults[M] {
     val c: scala.reflect.macros.blackbox.Context
     import c.universe._
     def wrapObject(t: c.Tree) = q"new ${c.prefix}.SingletonReader($t)"
@@ -503,7 +503,7 @@ object Macros2 {
     }
   }
 
-  abstract class Writing[M[_]] extends DeriveDefaults[M] {
+  private[upickle] abstract class Writing[M[_]] extends DeriveDefaults[M] {
     val c: scala.reflect.macros.blackbox.Context
     import c.universe._
     def wrapObject(obj: c.Tree) = q"new ${c.prefix}.SingletonWriter($obj)"

@@ -167,7 +167,7 @@ object Flatten {
   case class FlattenTestWithType[T](i: Int, @upickle.implicits.flatten t: T)
 
   object FlattenTestWithType {
-    //  implicit def rw[T: RW]: RW[FlattenTestWithType[T]] = upickle.default.macroRW
+  // implicit def rw[T: RW]: RW[FlattenTestWithType[T]] = upickle.default.macroRW
     implicit val rw: RW[FlattenTestWithType[Nested]] = upickle.default.macroRW
   }
 
