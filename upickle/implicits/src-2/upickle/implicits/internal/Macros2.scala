@@ -537,13 +537,17 @@ object Macros2 {
               if (isCollectionFlattenable(tpeOfField)) {
                 val (_, _, valueType) = extractKeyValueTypes(tpeOfField)
                 q"""
+                  val collisions = allKeys.intersect($select.map(_._1).toSet)
+                  if (collisions.nonEmpty) {
+                    throw new Exception("Key collision detected for the following keys: " + collisions.mkString(", "))
+                  }
                   $select.foreach { case (key, value) =>
-                  this.writeSnippetMappedName[R, $valueType](
-                    ctx,
-                    key,
-                    implicitly[${c.prefix}.Writer[$valueType]],
-                    value
-                    )
+                    this.writeSnippetMappedName[R, $valueType](
+                      ctx,
+                      key,
+                      implicitly[${c.prefix}.Writer[$valueType]],
+                      value
+                      )
                   }
                 """ :: Nil
               } else if (tpeOfField.typeSymbol.isClass && tpeOfField.typeSymbol.asClass.isCaseClass) {
@@ -591,6 +595,8 @@ object Macros2 {
 
       q"""
         new ${c.prefix}.CaseClassWriter[$targetType]{
+          private lazy val allKeys = Set[String](..${mappedNames.toList.map(name => Literal(Constant(name)))})
+
           def length(v: $targetType) = {
             ${
               getLength(targetType, q"v")

@@ -275,12 +275,19 @@ private def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types wit
       val typeSymbol = fieldTypeRepr.typeSymbol
       if (flatten) {
         if (isCollectionFlattenable(fieldTypeRepr)) {
-          val (_, keyTpe0, valueTpe0) = extractKeyValueTypes(fieldTypeRepr)
+          val (_, _, valueTpe0) = extractKeyValueTypes(fieldTypeRepr)
+          val allKeysExpr: Expr[Set[String]] = classTypeRepr.asType match {
+            case '[t] => Expr(allFields[t].map(_._2).toSet)
+          }
           val writerTpe0 = TypeRepr.of[W].appliedTo(valueTpe0)
-          (keyTpe0.asType, valueTpe0.asType, writerTpe0.asType) match {
-            case ('[keyTpe], '[valueTpe], '[writerTpe])=>
+          (valueTpe0.asType, writerTpe0.asType) match {
+            case ('[valueTpe], '[writerTpe])=>
               val snippet = '{
-                ${select.asExprOf[Iterable[(keyTpe, valueTpe)]]}.foreach { (k, v) =>
+                val collisions = ${select.asExprOf[Iterable[(String, valueTpe)]]}.map(_._1).toSet.intersect(${allKeysExpr})
+                if (collisions.nonEmpty) {
+                  throw new Exception("Key collision detected for the following keys: " + collisions.mkString(", "))
+                }
+                ${select.asExprOf[Iterable[(String, valueTpe)]]}.foreach { (k, v) =>
                   ${self}.writeSnippetMappedName[R, valueTpe](
                     ${ctx},
                     k.toString,
@@ -557,7 +564,7 @@ private def defineEnumVisitorsImpl[T0, T <: Tuple](prefix: Expr[Any], macroX: St
 
   def getDefs(t: TypeRepr, defs: List[(ValDef, Symbol)]): List[(ValDef, Symbol)] = {
     t match{
-      case AppliedType(prefix, args) =>
+      case AppliedType(_, args) =>
         val defAndSymbol = handleType(args(0), "x" + defs.size, skipTrait = true)
         getDefs(args(1), defAndSymbol.toList ::: defs)
       case _ if t =:= TypeRepr.of[EmptyTuple] => defs
