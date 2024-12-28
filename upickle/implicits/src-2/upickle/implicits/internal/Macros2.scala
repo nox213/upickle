@@ -322,7 +322,6 @@ object Macros2 {
       val (localReaders, aggregates) = mappedNames.zipWithIndex.map { case (_, idx) =>
             (TermName(s"localReader$idx"), TermName(s"aggregated$idx"))
         }.unzip
-      val readKey = if (keyTypeOfCollection =:= typeOf[String]) q"currentKey" else q"read(currentKey)(implicitly[${c.prefix}.Reader[$keyTypeOfCollection]])"
 
       def constructClass(constructedTpe: c.Type): c.universe.Tree = {
         def loop(tpe: c.Type, offset: Int): (c.universe.Tree, Int) = {
@@ -427,7 +426,7 @@ object Macros2 {
                 }
               case ..${
                   if (hasFlattenOnCollection)
-                    List(cq"-1 => aggregatedCollection += $readKey -> v.asInstanceOf[$valueTypeOfCollection]")
+                    List(cq"-1 => aggregatedCollection += currentKey -> v.asInstanceOf[$valueTypeOfCollection]")
                   else Nil
                 }
               case _ => throw new java.lang.IndexOutOfBoundsException(currentIndex.toString)
@@ -532,13 +531,12 @@ object Macros2 {
           symbol.annotations.find(_.tree.tpe =:= typeOf[flatten]) match {
             case Some(_) =>
               if (isCollectionFlattenable(tpeOfField)) {
-                val (_, keyType, valueType) = extractKeyValueTypes(tpeOfField)
-                val writeKey = if (keyType =:= typeOf[String]) q"key" else q"upickle.default.write(key)(implicitly[${c.prefix}.Writer[$keyType]])"
+                val (_, _, valueType) = extractKeyValueTypes(tpeOfField)
                 q"""
                   $select.foreach { case (key, value) =>
                   this.writeSnippetMappedName[R, $valueType](
                     ctx,
-                    $writeKey,
+                    key,
                     implicitly[${c.prefix}.Writer[$valueType]],
                     value
                     )
