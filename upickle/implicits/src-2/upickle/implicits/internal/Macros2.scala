@@ -209,8 +209,12 @@ object Macros2 {
       if (fields.count { case(_, _, _, _, _, isCollection) => isCollection } > 1) {
         fail("Only one collection can be annotated with @upickle.implicits.flatten in the same level")
       }
-      if (fields.map { case (_, mappedName, _, _, _, _) => mappedName }.distinct.length != fields.length) {
-        fail("There are multiple fields with the same key")
+      val duplicatedKeys = fields.map { case (_, mappedName, _, _, _, _) => mappedName }.groupBy(identity).collect { case (x, List(_, _, _*)) => x }
+      if (duplicatedKeys.nonEmpty) {
+        fail(
+          s"""There are multiple fields with the same key.
+             |Following keys are duplicated: ${duplicatedKeys.mkString(", ")}.
+             |""".stripMargin)
       }
     }
 

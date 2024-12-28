@@ -576,8 +576,13 @@ private def validateFlattenAnnotationImpl[T](using Quotes, Type[T]): Expr[Unit] 
   if (fields.count(_._5) > 1) {
     report.errorAndAbort("Only one collection can be annotated with @upickle.implicits.flatten in the same level")
   }
-  if (fields.map(_._2).distinct.length != fields.length) {
-    report.errorAndAbort("There are multiple fields with the same key")
+  val duplicatedKeys = fields.map { case (_, mappedName, _, _, _) => mappedName }.groupBy(identity).collect { case (x, List(_, _, _*)) => x }
+  if (duplicatedKeys.nonEmpty) {
+    report.errorAndAbort(
+      s"""There are multiple fields with the same key.
+         |Following keys are duplicated: ${duplicatedKeys.mkString(", ")}.
+         |""".stripMargin
+    )
   }
   '{()}
 

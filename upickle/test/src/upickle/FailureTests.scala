@@ -37,13 +37,25 @@ object WrongTag {
 
 }
 
-case class FlattenTwoMaps(@upickle.implicits.flatten map1: Map[String, String], @upickle.implicits.flatten map2: Map[String, String])
-case class ConflictingKeys(i: Int, @upickle.implicits.flatten cm: ConflictingMessage)
-case class ConflictingMessage(i: Int)
-object ConflictingMessage {
-  implicit def rw: upickle.default.ReadWriter[ConflictingMessage] = upickle.default.macroRW
+object FlattenTest {
+  case class UnsupportedType(@upickle.implicits.flatten i: Int)
+  case class UnsupportedCollectionType(@upickle.implicits.flatten x: Seq[(Seq[Int], Int)])
+
+  case class FlattenTwoMaps(@upickle.implicits.flatten map1: Map[String, String], @upickle.implicits.flatten map2: Map[String, String])
+
+  case class ConflictingKeys(i: Int, @upickle.implicits.flatten cm: ConflictingMessage)
+
+  case class ConflictingMessage(i: Int)
+
+  object ConflictingMessage {
+    implicit def rw: upickle.default.ReadWriter[ConflictingMessage] = upickle.default.macroRW
+  }
+
+  case class MapWithNoneStringKey(@upickle.implicits.flatten map: Map[ConflictingMessage, String])
+  case class FlattenTwoCaseClasses(@upickle.implicits.flatten m1: Message1, @upickle.implicits.flatten m2: Message2)
+  case class Message1(x: Int)
+  case class Message2(x: String)
 }
-case class MapWithNoneStringKey(@upickle.implicits.flatten map: Map[ConflictingMessage, String])
 
 object TaggedCustomSerializer{
 
@@ -273,9 +285,14 @@ object FailureTests extends TestSuite {
 //      compileError("""read[Array[Object]]("")""").msg
       // Make sure this doesn't hang the compiler =/
       compileError("implicitly[upickle.default.Reader[Nothing]]")
-      compileError("upickle.default.macroRW[FlattenTwoMaps]")
-      compileError("upickle.default.macroRW[ConflictingKeys]")
-      compileError("upickle.default.macroRW[MapWithNoneStringKey]")
+    }
+    test("flattenAnnotation") {
+      compileError("upickle.default.macroRW[FlattenTest.FlattenTwoMaps]")
+      compileError("upickle.default.macroRW[FlattenTest.ConflictingKeys]")
+      compileError("upickle.default.macroRW[FlattenTest.MapWithNoneStringKey]")
+      compileError("upickle.default.macroRW[FlattenTest.UnsupportedType]")
+      compileError("upickle.default.macroRW[FlattenTest.UnsupportedCollectionType]")
+      compileError("upickle.default.macroRW[FlattenTest.FlattenTwoCaseClasses]")
     }
     test("expWholeNumbers"){
       upickle.default.read[Byte]("0e0") ==> 0.toByte
