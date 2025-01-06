@@ -148,7 +148,10 @@ private def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, St
                 loop(rawLabel, label, newClassTypeRepr, newDefaults)
               }
         }
-      } else report.errorAndAbort(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+      } else {
+        report.error(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+        Nil
+      }
     }
     else {
       (field, label, substitutedTypeRepr, defaults.get(label), false) :: Nil
@@ -232,7 +235,10 @@ private def writeLengthImpl[T](thisOuter: Expr[upickle.core.Types with upickle.i
                   loop(rawLabel, label, newClassTypeRepr, newSelect, newDefaults)
                 }
           }
-        } else report.errorAndAbort(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+        } else {
+          report.error(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+          Nil
+        }
       }
       else if (!defaults.contains(label)) List('{1})
       else {
@@ -306,7 +312,10 @@ private def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types wit
                   loop(rawLabel, label, newClassTypeRepr, newSelect, newDefaults)
                 }
           }
-        } else report.errorAndAbort(s"${typeSymbol} is not a case class or a Iterable[(String, _)]", v.asTerm.pos)
+        } else {
+           report.error(s"${typeSymbol} is not a case class or a Iterable[(String, _)]", v.asTerm.pos)
+           Nil
+        }
       }
       else {
         val tpe0 = fieldTypeRepr
@@ -415,7 +424,10 @@ private def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: E
                 }
                 (term :: terms, nextOffset)
             }
-          } else report.errorAndAbort(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+          } else {
+            report.error(s"${typeSymbol} is not a case class or a Iterable[(String, _)]")
+            (terms, i + 1)
+          }
         }
         else {
           val lhs = '{$params(${ Expr(i) })}
