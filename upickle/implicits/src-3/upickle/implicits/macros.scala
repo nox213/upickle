@@ -147,10 +147,8 @@ private def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, St
                 val newClassTypeRepr = TypeRepr.of[T]
                 loop(rawLabel, label, newClassTypeRepr, newDefaults)
               }
-          case _ =>
-            report.errorAndAbort(s"Unsupported type $typeSymbol for flattening")
         }
-      } else report.errorAndAbort(s"${typeSymbol} is not a case class or a immutable.Map")
+      } else report.errorAndAbort(s"Invalid type for flattening: ${typeSymbol}")
     }
     else {
       (field, label, substitutedTypeRepr, defaults.get(label), false) :: Nil
@@ -233,10 +231,8 @@ private def writeLengthImpl[T](thisOuter: Expr[upickle.core.Types with upickle.i
                   val newClassTypeRepr = TypeRepr.of[T]
                   loop(rawLabel, label, newClassTypeRepr, newSelect, newDefaults)
                 }
-            case _ =>
-              report.errorAndAbort("Unsupported type for flattening")
           }
-        } else report.errorAndAbort(s"${typeSymbol} is not a case class or a immutable.Map")
+        } else report.errorAndAbort(s"Invalid type for flattening ${typeSymbol}")
       }
       else if (!defaults.contains(label)) List('{1})
       else {
@@ -309,8 +305,6 @@ private def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types wit
                   val newClassTypeRepr = TypeRepr.of[T]
                   loop(rawLabel, label, newClassTypeRepr, newSelect, newDefaults)
                 }
-            case _ =>
-              report.errorAndAbort("Unsupported type for flattening", v)
           }
         } else report.errorAndAbort(s"${typeSymbol} is not a case class or a subtype of Iterable", v.asTerm.pos)
       }
@@ -420,10 +414,8 @@ private def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: E
                   case t: TermRef => (Ref(t.classSymbol.get.companionModule), i)
                 }
                 (term :: terms, nextOffset)
-              case _ =>
-                report.errorAndAbort(s"Unsupported type $typeSymbol for flattening")
             }
-          } else report.errorAndAbort(s"${typeSymbol} is not a case class or a immutable.Map")
+          } else report.errorAndAbort(s"Invalid type for flattening: ${typeSymbol}")
         }
         else {
           val lhs = '{$params(${ Expr(i) })}
