@@ -82,7 +82,7 @@ private def allReadersImpl[T, R[_]](using Quotes, Type[T], Type[R]): Expr[(AnyRe
   val fields = allFields[T]
   val (readerMap, readers) = fields.partitionMap { case (_, _, tpe, _, isFlattenMap) =>
     if (isFlattenMap) {
-      val (_, _, valueTpe) = extractKeyValueTypes(tpe)
+      val (_, valueTpe) = extractKeyValueTypes(tpe)
       val readerTpe = TypeRepr.of[R].appliedTo(valueTpe)
       val reader = readerTpe.asType match {
         case '[t] => '{summonInline[t].asInstanceOf[AnyRef]}
@@ -271,7 +271,7 @@ private def writeSnippetsImpl[R, T, W[_]](thisOuter: Expr[upickle.core.Types wit
       val typeSymbol = fieldTypeRepr.typeSymbol
       if (flatten) {
         if (isCollectionFlattenable(fieldTypeRepr)) {
-          val (_, _, valueTpe0) = extractKeyValueTypes(fieldTypeRepr)
+          val (_, valueTpe0) = extractKeyValueTypes(fieldTypeRepr)
           val allKeysExpr: Expr[Set[String]] = classTypeRepr.asType match {
             case '[t] => Expr(allFields[t].map(_._2).toSet)
           }
@@ -395,7 +395,7 @@ private def applyConstructorImpl[T](using quotes: Quotes, t0: Type[T])(params: E
         val flatten = extractFlatten(sym0)
         if (flatten) {
           if (isCollectionFlattenable(appliedTpe)) {
-            val (_, keyTpe0, valueTpe0) = extractKeyValueTypes(appliedTpe)
+            val (keyTpe0, valueTpe0) = extractKeyValueTypes(appliedTpe)
             (keyTpe0.asType, valueTpe0.asType) match {
               case ('[keyTpe], '[valueTpe]) =>
                 val typedCollection =  '{${collection}.asInstanceOf[scala.collection.mutable.ListBuffer[(keyTpe, valueTpe)]]}.asTerm
@@ -595,11 +595,12 @@ private def isCaseClass(using Quotes)(typeSymbol: quotes.reflect.Symbol): Boolea
   typeSymbol.isClassDef && typeSymbol.flags.is(Flags.Case)
 }
 
-private def extractKeyValueTypes(using Quotes)(tpe: quotes.reflect.TypeRepr): (quotes.reflect.TypeRepr, quotes.reflect.TypeRepr, quotes.reflect.TypeRepr) =
+// extract key value types from collections like Map[K, V] or Iterable[(K, V)]
+private def extractKeyValueTypes(using Quotes)(tpe: quotes.reflect.TypeRepr): (quotes.reflect.TypeRepr, quotes.reflect.TypeRepr) =
   import quotes.reflect._
   tpe match {
-    case AppliedType(tycon, keyType :: valueType :: Nil) => (tycon, keyType, valueType)
-    case AppliedType(tycon, AppliedType(_, keyType :: valueType :: Nil) :: Nil) => (tycon, keyType, valueType)
+    case AppliedType(_, keyType :: valueType :: Nil) => (keyType, valueType)
+    case AppliedType(_, AppliedType(_, keyType :: valueType :: Nil) :: Nil) => (keyType, valueType)
     case _ => report.errorAndAbort(s"Fail to extract key value from $tpe")
   }
 
